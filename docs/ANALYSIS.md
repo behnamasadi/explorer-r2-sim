@@ -22,6 +22,7 @@ This doc has three parts:
 |---------------------------------|--------:|--------:|----------:|--------:|----------:|-------|
 | `run_20260514T154145Z` (v1)     | 40.27 m | 0.64 m (1.6 %) | 1.01 | 195.28 m (485 %) | 7.21 | Forward drive. VIO init contaminated by spawn drop. Pre-CLAHE config. |
 | `run_20260514T162146Z` (v2)     | 58.52 m | **0.15 m (0.3 %)** | **1.01** | **4030 m (6887 %)** | **378** | Figure-8. CLAHE + aggressive tracker → catastrophic VIO blow-up. Reverted. |
+| `run_20260514T182108Z` (v3)     | 51.28 m | **0.16 m (0.3 %)** | **1.01** | 139.75 m (272 %) | **5.40** | Tracker reverted to defaults + camera bumped to 640×480. **70× better than v2**, slightly better than v1. Z-axis drift visible — still a parallax/scene-texture problem ([case study 3](#case-study-3--640480-revert-mono-vio-back-to-baseline)). |
 
 LIO has been steadily healthy. VIO is the open problem.
 
@@ -529,6 +530,109 @@ If you ever switch to:
 
 then flipping back to CLAHE + 400 pts + threshold 10 is the right
 move. For the current gz cave sim, defaults win.
+
+## Case study 3 — 640×480 + revert: mono VIO back to baseline
+
+Bag `runs/run_20260514T182108Z/`. Same drive profile as v2 (stationary
+→ slow forward → stop → figure-8 → stop). Two config changes since v2:
+
+- All five front-end tracker tweaks reverted to upstream defaults
+  (the v2 backfire diagnosed in [case study 2](#case-study-2--clahe-aggressive-tracker-backfire)).
+- Camera resolution bumped 320 × 240 → 640 × 480 (intrinsics
+  rescaled in `model.sdf` + `kalibr_imucam_chain.yaml`).
+
+### Results
+
+```
+GT  end (-5.38, -2.04, -0.01) m,  path 51.28 m
+LIO end (-5.42, -1.92, +0.10) m,  path 51.78 m,  |err| =   0.16 m  (0.3 %)
+VIO end (-116.56, -86.07, +10.41) m,  path 276.76 m,  |err| = 139.75 m  (272 %)
+```
+
+| | v1 (320×240, no init fix) | v2 (CLAHE + aggressive) | **v3 (640×480, defaults)** |
+|---|---:|---:|---:|
+| VIO path-length ratio | 7.21 | 378 | **5.40** |
+| VIO end-position error | 195 m | 4030 m | **140 m** |
+| LIO ratio | 1.01 | 1.01 | 1.01 |
+| LIO end-error | 0.64 m | 0.15 m | 0.16 m |
+
+VIO is **70× better than v2** (the tracker revert undid the
+catastrophic CLAHE/aggressive failure) and slightly better than the
+v1 baseline (the resolution bump and init/timing fixes are helping).
+But VIO still has 5.4× scale drift and 140 m of end-position error on
+a 51 m drive. Mono VIO in this scene is not yet usable.
+
+### What the plots show
+
+**`trajectory_xy.png` (top-down)**: GT and LIO are nearly on top of
+each other in a tiny ~10 m region near the origin. VIO's green trail
+sweeps smoothly south-west out to (−116, −86) m — a graceful curve,
+not noisy chaos. The smoothness is important: it means the filter is
+*confident in a wrong answer*, not flailing. That's a hallmark of a
+biased estimate (constant residual being integrated), not a tracker
+problem.
+
+**`trajectory_xyz.png` (per-axis vs time)**:
+- X: GT/LIO oscillate between −5 and +20 m. VIO monotonically
+  decreasing to −116 m.
+- Y: GT/LIO near zero. VIO sliding down to −85 m.
+- **Z: this is the diagnostic.** GT and LIO stay at z=0 for the
+  entire run (rover is on flat ground). VIO's z dips smoothly down
+  to −5 m around t = 0.25, then rises back through 0 and continues
+  up to +10 m by the end. That smooth parabolic-ish curve is exactly
+  the "constant residual acceleration" pattern the user described —
+  there's still some small gravity-direction error that the filter
+  keeps integrating into position. With ZUPT on the velocity should
+  be clamped at the start, but as soon as motion begins the residual
+  starts compounding.
+
+The Z-curve magnitude (~15 m vertical excursion over a horizontal
+~10 m drive) is much smaller than v2's vertical excursion (3360 m)
+but much bigger than would be tolerable. The bias is *much* reduced,
+not eliminated.
+
+### Why VIO still drifts — two compounding causes on top of parallax
+
+Looking at the actual camera frames in the bag (`camera_frames/`):
+
+1. **The tunnel walls have a regular hexagonal lattice pattern.**
+   Every grid intersection looks identical to every other. Mono VIO
+   can lose features (e.g. when the camera rotates or a feature
+   leaves the FOV) and re-acquire a *different* feature that the
+   tracker / descriptor thinks is the same one. The result is a
+   correspondence error → wrong relative pose → drift accumulates.
+   KLT is mostly robust to this *frame-to-frame* (small patches,
+   small motion), but over a long traverse the cumulative effect
+   shows up.
+
+2. **The scene is dim** in the deep tunnel sections. Lower
+   signal-to-noise on the feature corners → noisier tracking → bigger
+   per-step error → more accumulated drift.
+
+3. (And of course) **forward driving is parallax-starved** — see the
+   [Aside on parallax](#aside-what-is-parallax-and-why-is-forward-driving-the-worst-case)
+   for why the optical-axis direction is a depth blind spot.
+
+### What's next, ranked
+
+1. **Try the same drive profile in the `cave` world** instead of
+   `tunnel`. The cave has rough rock walls with *random*, *non-repeating*
+   texture and a more varied geometry. That removes the self-similar
+   pattern problem and leaves only the parallax problem to fight.
+   This is a one-flag change to the launch (`world:=cave`) — no code
+   work. Result will tell you whether the residual drift is from the
+   scene or from VIO fundamentals.
+2. **Drive with much more yaw than v3 did.** v3 was still mostly
+   forward-driving with intermittent figure-8s. A sustained
+   yaw-while-driving (curving constantly, never going straight) feeds
+   mono VIO continuous parallax. Tighten the figure-8s.
+3. **Stereo VIO.** Still the real cure for everything in this
+   section. Two `rs_*` cameras already on the robot; one extra
+   `cam1` block in `kalibr_imucam_chain.yaml` + `use_stereo: true` +
+   `max_cameras: 2`.
+4. **RGBD VIO** (e.g. Kimera, which can ingest depth). `/rs_front/depth`
+   is already published — no SDF change needed. A different VIO
+   submodule, but no second camera required.
 
 ## What's left to try on mono VIO
 
