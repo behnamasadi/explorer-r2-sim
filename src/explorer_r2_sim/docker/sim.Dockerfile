@@ -47,6 +47,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV ROS_DISTRO=${ROS_DISTRO}
 WORKDIR /ws
 
+# The bind-mounted workspace is owned by the host user (uid 1000), but the
+# container runs as root. Git's "dubious ownership" check then refuses to
+# operate on third_party/* submodules. Allow git to trust any directory —
+# safe in this container because it's a single-user dev environment.
+RUN git config --global --add safe.directory '*'
+
 # Source ROS (and the workspace overlay if it exists) in /root/.bashrc so
 # `docker compose exec sim bash` drops you into a shell with `ros2` and
 # the explorer_r2_sim package already on the path. The entrypoint also
