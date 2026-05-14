@@ -49,8 +49,8 @@ def generate_launch_description():
         ),
         launch_arguments={
             "config_path":  vio_config_path,
-            "use_stereo":   "false",
-            "max_cameras":  "1",
+            "use_stereo":   "true",        # rs_front + rs_front_right
+            "max_cameras":  "2",
             "verbosity":    "INFO",
             "rviz_enable":  "false",
         }.items(),

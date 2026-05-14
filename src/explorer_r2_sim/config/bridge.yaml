@@ -122,6 +122,36 @@
   gz_type_name:   "gz.msgs.CameraInfo"
   direction:      GZ_TO_ROS
 
+# ─── Right half of the front stereo pair (rs_front_right) ───────────────
+# Same sensor type as rs_front, offset 10 cm to the right. Used together
+# with rs_front by stereo VIO (OpenVINS use_stereo:true, VINS-Fusion,
+# Kimera-VIO). Depth + points are also bridged here for downstream
+# consumers (e.g. RGBD VIO via Kimera) but stereo VIO itself only needs
+# image + camera_info from both cameras.
+- ros_topic_name: "/rs_front_right/image"
+  gz_topic_name:  "/rs_front_right/image"
+  ros_type_name:  "sensor_msgs/msg/Image"
+  gz_type_name:   "gz.msgs.Image"
+  direction:      GZ_TO_ROS
+
+- ros_topic_name: "/rs_front_right/depth"
+  gz_topic_name:  "/rs_front_right/depth_image"
+  ros_type_name:  "sensor_msgs/msg/Image"
+  gz_type_name:   "gz.msgs.Image"
+  direction:      GZ_TO_ROS
+
+- ros_topic_name: "/rs_front_right/points"
+  gz_topic_name:  "/rs_front_right/points"
+  ros_type_name:  "sensor_msgs/msg/PointCloud2"
+  gz_type_name:   "gz.msgs.PointCloudPacked"
+  direction:      GZ_TO_ROS
+
+- ros_topic_name: "/rs_front_right/camera_info"
+  gz_topic_name:  "/rs_front_right/camera_info"
+  ros_type_name:  "sensor_msgs/msg/CameraInfo"
+  gz_type_name:   "gz.msgs.CameraInfo"
+  direction:      GZ_TO_ROS
+
 # Other 3 RealSenses (rs_back/left/right) follow the same pattern. Bridging
 # all 4 is heavy on CPU+bandwidth — uncomment the ones you actually need.
 # - { ros_topic_name: "/rs_back/image",  gz_topic_name: "/rs_back/image",  ros_type_name: "sensor_msgs/msg/Image",  gz_type_name: "gz.msgs.Image",  direction: GZ_TO_ROS }

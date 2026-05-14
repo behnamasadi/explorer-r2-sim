@@ -4,8 +4,8 @@ verbosity: "INFO" # ALL, DEBUG, INFO, WARNING, ERROR, SILENT
 
 use_fej: true # if first-estimate Jacobians should be used (enable for good consistency)
 integration: "rk4" # discrete, rk4, analytical (if rk4 or analytical used then analytical covariance propagation is used)
-use_stereo: false # explorer_r2 has only one front-facing RGB camera right now (mono VIO)
-max_cameras: 1 # 1 = mono. Bump to 2 + use_stereo:true once a second camera is added to the model.
+use_stereo: true # Both rs_front (cam0) and rs_front_right (cam1) feed the filter.
+max_cameras: 2   # Stereo pair; baseline 10 cm. See kalibr_imucam_chain.yaml.
 
 # Online calibration knobs. In a real robot you usually leave these on so
 # the filter polishes the imperfect factory calibration. In *this* sim
