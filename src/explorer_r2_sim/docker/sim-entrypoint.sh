@@ -29,15 +29,25 @@ PKGS=(explorer_r2_sim)
 
 # ─── Optional: OpenVINS (VIO) ───────────────────────────────────────────
 if [ -e third_party/open_vins/ov_msckf ]; then
-    # Idempotent: re-running sed on already-patched files is a no-op.
-    sed -i 's|image_transport/image_transport\.h|image_transport/image_transport.hpp|' \
+    # Reset the patched files first so the sed patches stay idempotent
+    # across container restarts. The naive `\.h` → `.hpp` pattern below
+    # would match inside an already-patched `.hpp` substring and keep
+    # appending `p`s — past bug. Resetting from git before each patch
+    # makes the whole step deterministic.
+    git -C third_party/open_vins checkout -- \
+        ov_msckf/src/ros/ROS2Visualizer.h \
+        ov_msckf/src/ros/ROS1Visualizer.h \
+        ov_msckf/src/ros/ROSVisualizerHelper.h \
+        ov_core/src/test_tracking.cpp 2>/dev/null || true
+
+    sed -i 's|image_transport/image_transport\.h>|image_transport/image_transport.hpp>|' \
         third_party/open_vins/ov_msckf/src/ros/ROS2Visualizer.h \
         third_party/open_vins/ov_msckf/src/ros/ROS1Visualizer.h
-    sed -i 's|tf2_geometry_msgs/tf2_geometry_msgs\.h|tf2_geometry_msgs/tf2_geometry_msgs.hpp|' \
+    sed -i 's|tf2_geometry_msgs/tf2_geometry_msgs\.h>|tf2_geometry_msgs/tf2_geometry_msgs.hpp>|' \
         third_party/open_vins/ov_msckf/src/ros/ROSVisualizerHelper.h \
         third_party/open_vins/ov_msckf/src/ros/ROS2Visualizer.h \
         third_party/open_vins/ov_msckf/src/ros/ROS1Visualizer.h
-    sed -i 's|cv_bridge/cv_bridge\.h|cv_bridge/cv_bridge.hpp|' \
+    sed -i 's|cv_bridge/cv_bridge\.h>|cv_bridge/cv_bridge.hpp>|' \
         third_party/open_vins/ov_msckf/src/ros/ROS1Visualizer.h \
         third_party/open_vins/ov_msckf/src/ros/ROS2Visualizer.h \
         third_party/open_vins/ov_core/src/test_tracking.cpp
