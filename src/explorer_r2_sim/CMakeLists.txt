@@ -17,6 +17,7 @@ install(PROGRAMS
   scripts/lidar_field_adapter.py
   scripts/record_run.sh
   scripts/eval.sh
+  scripts/analyze_bag.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
