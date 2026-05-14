@@ -57,6 +57,27 @@ else
     rm -f /ws/src/open_vins
 fi
 
+# ─── Optional: VINS-Fusion (alternative VIO) ────────────────────────────
+# zinuok/VINS-Fusion-ROS2 ships four ament packages under one repo:
+# camera_models, vins, loop_fusion, global_fusion. Symlink the whole
+# repo so colcon picks them up; we only need camera_models + vins for
+# the basic stereo VIO. loop_fusion + global_fusion are optional.
+#
+# VINS-Fusion writes pose-graph + logs to output_path at runtime;
+# create it before vins_node starts.
+if [ -e third_party/VINS-Fusion-ROS2/vins/package.xml ]; then
+    ln -sfn /ws/third_party/VINS-Fusion-ROS2/camera_models  /ws/src/vins_camera_models
+    ln -sfn /ws/third_party/VINS-Fusion-ROS2/vins           /ws/src/vins
+    # loop_fusion + global_fusion are present but not required for the
+    # basic stereo VIO comparison. Uncomment to add them.
+    # ln -sfn /ws/third_party/VINS-Fusion-ROS2/loop_fusion   /ws/src/vins_loop_fusion
+    # ln -sfn /ws/third_party/VINS-Fusion-ROS2/global_fusion /ws/src/vins_global_fusion
+    mkdir -p /ws/runs/vins_output
+    PKGS+=(camera_models vins)
+else
+    rm -f /ws/src/vins_camera_models /ws/src/vins
+fi
+
 # ─── Optional: FAST_LIO (LIO) ───────────────────────────────────────────
 if [ -e third_party/FAST_LIO/package.xml ]; then
     # FAST_LIO has a nested submodule (include/ikd-Tree). If the user

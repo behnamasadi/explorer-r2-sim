@@ -48,16 +48,17 @@ except ImportError:
 
 # Topics we care about
 ODOM_TOPICS = {
-    "GT":  "/ground_truth/odom",
-    "VIO": "/ov_msckf/odomimu",
-    "LIO": "/Odometry",
+    "GT":   "/ground_truth/odom",
+    "VIO":  "/ov_msckf/odomimu",          # OpenVINS
+    "VINS": "/vins_estimator/odometry",   # VINS-Fusion (zinuok/VINS-Fusion-ROS2)
+    "LIO":  "/Odometry",                  # FAST_LIO
 }
 IMU_TOPIC   = "/imu"
 IMAGE_TOPIC = "/rs_front/image"
 CMD_TOPIC   = "/cmd_vel"
 
 # Colors aligned with the rviz/sim.rviz palette
-COLORS = {"GT": "#e6c100", "VIO": "#39c139", "LIO": "#3399ff"}
+COLORS = {"GT": "#e6c100", "VIO": "#39c139", "VINS": "#ff6e3a", "LIO": "#3399ff"}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -185,7 +186,7 @@ def read_bag(bag_dir: Path) -> tuple[dict[str, OdomTrace], ImuTrace, dict[str, T
 # ──────────────────────────────────────────────────────────────────────
 def plot_xy(odoms: dict[str, OdomTrace], out: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 10))
-    for name in ("GT", "VIO", "LIO"):
+    for name in ("GT", "VIO", "VINS", "LIO"):
         d = odoms[name].array()
         if len(d) == 0:
             continue
@@ -207,7 +208,7 @@ def plot_xy(odoms: dict[str, OdomTrace], out: Path) -> None:
 def plot_3d(odoms: dict[str, OdomTrace], out: Path) -> None:
     fig = plt.figure(figsize=(11, 9))
     ax = fig.add_subplot(111, projection="3d")
-    for name in ("GT", "VIO", "LIO"):
+    for name in ("GT", "VIO", "VINS", "LIO"):
         d = odoms[name].array()
         if len(d) == 0:
             continue
@@ -243,7 +244,7 @@ def plot_xyz(odoms: dict[str, OdomTrace], out: Path) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
     labels = ("X [m]", "Y [m]", "Z [m]")
     for i, label in enumerate(labels):
-        for name in ("GT", "VIO", "LIO"):
+        for name in ("GT", "VIO", "VINS", "LIO"):
             d = odoms[name].array()
             if len(d) == 0:
                 continue
@@ -393,7 +394,7 @@ def write_summary(out: Path, bag_dir: Path, odoms: dict[str, OdomTrace],
     lines.append("")
     lines.append("| | poses | start (x, y, z) [m] | end (x, y, z) [m] | path length [m] |")
     lines.append("|---|---:|---|---|---:|")
-    for name in ("GT", "LIO", "VIO"):
+    for name in ("GT", "LIO", "VIO", "VINS"):
         d = odoms[name].array()
         if len(d) == 0:
             lines.append(f"| **{name}** | 0 | — | — | — |")
@@ -414,7 +415,7 @@ def write_summary(out: Path, bag_dir: Path, odoms: dict[str, OdomTrace],
         lines.append("")
         lines.append("| | Δx | Δy | Δz | |err| [m] | |err| / GT_path |")
         lines.append("|---|---:|---:|---:|---:|---:|")
-        for name in ("LIO", "VIO"):
+        for name in ("LIO", "VIO", "VINS"):
             d = odoms[name].array()
             if len(d) == 0:
                 continue
@@ -431,7 +432,7 @@ def write_summary(out: Path, bag_dir: Path, odoms: dict[str, OdomTrace],
         lines.append("")
         lines.append("| | path length [m] | ratio |")
         lines.append("|---|---:|---:|")
-        for name in ("LIO", "VIO"):
+        for name in ("LIO", "VIO", "VINS"):
             pl = odoms[name].path_length()
             ratio = (pl / gt_pl) if gt_pl > 0 else float("inf")
             lines.append(f"| **{name}** | {pl:.2f} | {ratio:.2f} |")
@@ -473,7 +474,7 @@ def write_summary(out: Path, bag_dir: Path, odoms: dict[str, OdomTrace],
                      "wasn't recorded.")
     else:
         gt_pl = odoms["GT"].path_length()
-        for name in ("LIO", "VIO"):
+        for name in ("LIO", "VIO", "VINS"):
             d = odoms[name].array()
             if len(d) == 0:
                 lines.append(f"- **{name}**: no data recorded.")

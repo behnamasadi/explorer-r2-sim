@@ -5,3 +5,6 @@
 	path = third_party/FAST_LIO
 	url = https://github.com/hku-mars/FAST_LIO.git
 	branch = ROS2
+[submodule "third_party/VINS-Fusion-ROS2"]
+	path = third_party/VINS-Fusion-ROS2
+	url = https://github.com/zinuok/VINS-Fusion-ROS2.git

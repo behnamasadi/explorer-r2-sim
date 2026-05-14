@@ -3,6 +3,7 @@
 #   gz sim + world      ─►  world.launch.py
 #   spawn EXPLORER_R2   ─►  spawn_robot.launch.py
 #   OpenVINS (VIO)      ─►  vio.launch.py
+#   VINS-Fusion (VIO)   ─►  vins.launch.py    (optional, for head-to-head)
 #   FAST_LIO (LIO)      ─►  lio.launch.py
 #
 # All sub-launches run as one composite launch. To run the same stack
@@ -74,6 +75,16 @@ def generate_launch_description():
         except PackageNotFoundError:
             print("[cave.launch.py] ov_msckf not installed — skipping VIO. "
                   "Initialise third_party/open_vins and rebuild to enable.")
+
+        # vins.launch.py — VINS-Fusion (the second VIO, for head-to-head
+        # comparison). Optional submodule at third_party/VINS-Fusion-ROS2.
+        try:
+            get_package_share_directory("vins")
+            actions.append(IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(launch_dir, "vins.launch.py"))))
+        except PackageNotFoundError:
+            print("[cave.launch.py] vins not installed — skipping VINS-Fusion. "
+                  "Initialise third_party/VINS-Fusion-ROS2 and rebuild to enable.")
 
         # lio.launch.py — same guard for FAST_LIO.
         try:
