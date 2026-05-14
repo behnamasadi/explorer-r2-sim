@@ -233,11 +233,13 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("rqt_steering")),
     )
 
-    # Optional VIO / LIO bring-up. Default on so `docker compose up` gives
-    # you the full stack (sim + VIO + LIO) in one shot. Each include is
-    # gated on the corresponding submodule actually being installed —
-    # users who haven't initialised open_vins or FAST_LIO just get a
-    # warning and skip past it instead of a launch failure.
+    # VIO and LIO are decoupled from the sim — each has its own launch
+    # file (vio.launch.py / lio.launch.py) and subscribes to the live
+    # /imu, /rs_front/image, /lidar/points topics. By default this
+    # launch only brings up the sim; users who want a single-command
+    # full-stack bring-up can pass vio:=true lio:=true. Either way the
+    # estimators are running as independent processes that can be
+    # killed / restarted without bouncing gz.
     def _maybe_include_estimators(context, *_args, **_kwargs):
         from ament_index_python.packages import PackageNotFoundError
         actions = []
@@ -291,9 +293,13 @@ def generate_launch_description():
         DeclareLaunchArgument("spawn_yaw", default_value="auto",
                               description="Robot spawn yaw (rad). 'auto' = SPAWN_POSES[<world>][3]"),
         DeclareLaunchArgument("vio", default_value="false",
-                              description="Auto-start OpenVINS alongside the sim. Requires the open_vins submodule."),
+                              description=("Also start OpenVINS in this same launch (single-command "
+                                           "full stack). Off by default — run vio.launch.py separately "
+                                           "if you prefer. Requires the open_vins submodule.")),
         DeclareLaunchArgument("lio", default_value="false",
-                              description="Auto-start FAST_LIO alongside the sim. Requires the FAST_LIO submodule."),
+                              description=("Also start FAST_LIO in this same launch. Off by default — "
+                                           "run lio.launch.py separately if you prefer. Requires the "
+                                           "FAST_LIO submodule.")),
         DeclareLaunchArgument("verbose", default_value="3"),
 
         # Make the Fuel + workspace model paths discoverable.

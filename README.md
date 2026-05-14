@@ -181,21 +181,56 @@ ROS 2 ↔ GZ bridge, RViz layouts, joystick teleop, and OpenVINS VIO.
 
 ## Running modes
 
-By default, `docker compose up` brings up **the sim only** — gz +
-bridge + RViz + teleop, no sensor fusion. VIO and LIO are explicit
-opt-ins; you can either start them alongside the sim from the same
-launch (`vio:=true lio:=true`) or attach them to a running sim from
-another terminal.
+The sim, OpenVINS (VIO), and FAST_LIO (LIO) each have their own launch
+file. The estimators are **decoupled** from the sim — they only
+subscribe to `/imu`, `/rs_front/image`, and `/lidar/points`, so they
+don't care whether the sim was launched in the same `ros2 launch`
+invocation or a different one. You have two equivalent ways to bring
+them up:
 
-| Mode | What it gives you | Recipe |
-|------|------------------|--------|
-| **1. Sim only** (default) | gz sim + bridge + RViz + teleop. Drive the robot, see raw sensor topics. | [Quickstart — Mode 1](#quickstart--mode-1-sim-only) |
-| **2. + OpenVINS (VIO)** | Adds OpenVINS to the running sim — green trajectory in RViz against wheel-odom (red) and ground truth. | [Run VIO](#run-vio--attach-openvins-to-a-running-sim) |
-| **3. + FAST_LIO (LIO)** | Adds FAST_LIO — blue trajectory plus an accumulated point-cloud map in RViz. | [Run LIO](#run-lio--attach-fast_lio-to-a-running-sim) |
+| Mode | Launch file                              |
+|------|------------------------------------------|
+| **1. Sim** | `cave.launch.py` |
+| **2. VIO** (OpenVINS) | `vio.launch.py` |
+| **3. LIO** (FAST_LIO) | `lio.launch.py` |
 
-Mode 2 and Mode 3 are independent — you can run one, the other, both,
-or neither. They publish to topics the existing `rviz/sim.rviz` layout
-already subscribes to, so no second RViz is needed.
+**Path A — separate terminals (decoupled, restartable):**
+
+```bash
+# Terminal 1 — sim:
+docker compose up
+
+# Terminal 2 — VIO (kill / restart without bouncing gz):
+docker compose exec sim bash -ic "ros2 launch explorer_r2_sim vio.launch.py"
+
+# Terminal 3 — LIO:
+docker compose exec sim bash -ic "ros2 launch explorer_r2_sim lio.launch.py"
+```
+
+**Path B — one command, single terminal:**
+
+```bash
+# Sim + VIO + LIO in one shot:
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
+  vio:=true lio:=true
+
+# Sim + VIO only / Sim + LIO only — flip the args:
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py vio:=true
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py lio:=true
+```
+
+Both paths produce the same running processes. The trade-off:
+
+- **Path A** lets you Ctrl-C and re-launch just VIO (or just LIO)
+  without restarting gz. Best for iterating on estimator config or
+  scenarios where you want to compare runs of the same estimator on
+  the same sim instance.
+- **Path B** is the "I want everything up, one command" shortcut. The
+  whole stack comes up and goes down together.
+
+All three launches share the same RViz layout (`rviz/sim.rviz`), so
+VIO and LIO trails appear in the already-open RViz the moment those
+launches start publishing — no second RViz.
 
 > **GNSS (`/navsat`, `sensor_msgs/NavSatFix` @ 10 Hz) and magnetometer
 > (`/magnetometer`, `sensor_msgs/MagneticField`)** are bridged out of the
@@ -227,42 +262,19 @@ docker compose build sim
 docker compose up
 ```
 
-### What runs and what you see
+### What runs in Mode 1 alone
 
 | Component                | Topic(s) produced                                       | RViz display    | When it appears                                          |
 |--------------------------|---------------------------------------------------------|-----------------|----------------------------------------------------------|
 | **gz sim**               | sensor topics: `/imu`, `/lidar/points`, `/rs_front/*`, `/navsat`, … | Lidar Cloud, RS Front Camera/Cloud, TF | Immediately when gz finishes loading the world.          |
 | **DiffDrive plugin**     | `/model/explorer_r2/odometry`                            | **Wheel Odom** (red arrow) | As soon as the robot moves (wheels turn).                 |
 | **Ground truth** (gz)    | `/ground_truth/pose` (TFMessage)                         | TF display, frame `explorer_r2` | Immediately.                                              |
-| **VIO / LIO displays**   | *(not running in Mode 1)*                                | empty until you start Mode 2 / Mode 3 | See [Run VIO](#run-vio--attach-openvins-to-a-running-sim) and [Run LIO](#run-lio--attach-fast_lio-to-a-running-sim). |
 
-**Drive the robot** (joystick or keyboard — see [How to drive the
-robot](#how-to-drive-the-robot)); without motion the wheel-odom trail
-stays at the spawn pose.
-
-### Adding VIO and/or LIO
-
-Two equivalent paths:
-
-**(a) Start the estimators alongside the sim** — single command, single
-terminal:
-
-```bash
-# Sim + VIO:
-docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py vio:=true
-
-# Sim + LIO:
-docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py lio:=true
-
-# Sim + VIO + LIO:
-docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
-  vio:=true lio:=true
-```
-
-**(b) Attach to an already-running sim** — useful if you want to start /
-stop an estimator without bouncing gz. See
-[Run VIO](#run-vio--attach-openvins-to-a-running-sim) and
-[Run LIO](#run-lio--attach-fast_lio-to-a-running-sim) below.
+The VIO / LIO displays in the RViz layout exist but stay empty until
+you add Mode 2 / Mode 3 — see [Path A or Path B
+above](#running-modes). **Drive the robot** (joystick or keyboard —
+see [How to drive the robot](#how-to-drive-the-robot)); without motion
+the wheel-odom trail stays at the spawn pose.
 
 The host's `~/ros2_ws` is bind-mounted into the container at `/ws`. Source
 edits show up live; `build/`, `install/`, `log/` end up on the host
