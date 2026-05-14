@@ -36,3 +36,8 @@ vio_run/
 /third_party/royale-5.10.1/
 /docker/pmd/
 /docker/pmd-cropper/
+
+# Symlinks created by docker/sim-entrypoint.sh so colcon can see the
+# third_party/ submodules. Generated at runtime; not committed.
+/src/open_vins
+/src/fast_lio

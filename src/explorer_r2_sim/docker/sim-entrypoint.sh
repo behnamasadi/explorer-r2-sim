@@ -50,7 +50,13 @@ fi
 # ─── Optional: FAST_LIO (LIO) ───────────────────────────────────────────
 if [ -e third_party/FAST_LIO/package.xml ]; then
     ln -sfn /ws/third_party/FAST_LIO /ws/src/fast_lio
-    PKGS+=(fast_lio)
+    # FAST_LIO unconditionally find_package()'s livox_ros_driver2. We
+    # don't have a Livox device — we feed it /lidar/points from the gz
+    # gpu_lidar (lidar_type: 3 / Ouster) — but we still need the
+    # CustomMsg type to be defined for FAST_LIO to compile. The shim
+    # at src/livox_ros_driver2_msgs provides only the message types
+    # (no SDK), which is enough.
+    PKGS+=(livox_ros_driver2 fast_lio)
 else
     rm -f /ws/src/fast_lio
 fi
