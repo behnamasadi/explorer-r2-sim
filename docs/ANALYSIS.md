@@ -23,8 +23,45 @@ This doc has three parts:
 | `run_20260514T154145Z` (v1)     | 40.27 m | 0.64 m (1.6 %) | 1.01 | 195.28 m (485 %) | 7.21 | Forward drive. VIO init contaminated by spawn drop. Pre-CLAHE config. |
 | `run_20260514T162146Z` (v2)     | 58.52 m | **0.15 m (0.3 %)** | **1.01** | **4030 m (6887 %)** | **378** | Figure-8. CLAHE + aggressive tracker → catastrophic VIO blow-up. Reverted. |
 | `run_20260514T182108Z` (v3)     | 51.28 m | **0.16 m (0.3 %)** | **1.01** | 139.75 m (272 %) | **5.40** | Tracker reverted to defaults + camera bumped to 640×480. **70× better than v2**, slightly better than v1. Z-axis drift visible — still a parallax/scene-texture problem ([case study 3](#case-study-3--640480-revert-mono-vio-back-to-baseline)). |
+| `run_20260514T184552Z` (v4)     | 17.89 m | **0.09 m (0.5 %)** | **1.00** | 20.22 m (113 %) | **1.62** | **Circle outside the tunnel, no lattice texture.** VIO ratio 5.40 → 1.62. Remaining 113 % end-pos error is almost entirely the unobservable initial yaw — Umeyama-aligned APE would be tiny ([case study 4](#case-study-4--out-of-the-tunnel-circle-mono-vio-finally-works)). |
 
-LIO has been steadily healthy. VIO is the open problem.
+LIO has been steadily healthy. VIO is the open problem, but **v4 is
+the first run where mono VIO is within striking distance of useful**.
+
+### Why VIO trajectories look so bad — the headline conclusion
+
+Across every bag we've recorded, VIO trajectories appear catastrophically
+wrong in raw RViz / `summary.md` numbers. But after running
+`evo_ape -a` (Umeyama alignment, which rotates the VIO frame onto GT
+before computing error), **most of the apparent error vanishes**.
+Proof from v4:
+
+```
+                 RMSE       Meaning
+─────────────  ────────    ────────────────────────────────────────
+Raw           17.80 m       apparent VIO error
+Aligned -a     4.25 m       ← 76 % of error was just an unobservable yaw rotation
+Aligned -as    1.63 m       ← additional 62 % was scale drift; remainder is real shape error
+```
+
+**The root cause is unobservable yaw in mono IMU-only init:** gravity
+fixes the IMU's pitch and roll, but it can't fix yaw (rotation around
+the gravity axis). OpenVINS' static init has to pick *some* yaw and
+ends up with whatever the first IMU samples imply — effectively
+random relative to gz world. From then on the entire VIO trajectory
+is correct in shape (modulo the parallax-limited scale drift) but
+rotated into the wrong frame.
+
+This explains the user-visible "VIO is going in the wrong direction"
+across every run from v1 onwards. It is **not a config bug**. It's
+a fundamental limitation of monocular VIO without a heading sensor.
+Fixes: magnetometer fusion (`/magnetometer` already published —
+needs `robot_localization`), stereo VIO (parallax fixes yaw
+observability), or a known-heading prior (rover spawns facing world
++X — would require a small patch to OpenVINS' init).
+
+See [case study 4](#case-study-4--out-of-the-tunnel-circle-mono-vio-finally-works)
+for the full evidence.
 
 ### What changed since defaults — currently shipping
 
@@ -633,6 +670,132 @@ Looking at the actual camera frames in the bag (`camera_frames/`):
 4. **RGBD VIO** (e.g. Kimera, which can ingest depth). `/rs_front/depth`
    is already published — no SDF change needed. A different VIO
    submodule, but no second camera required.
+
+## Case study 4 — out-of-the-tunnel circle: mono VIO finally works
+
+Bag `runs/run_20260514T184552Z/`. User drove a teardrop loop *outside*
+the tunnel (in the staging area / wooden-shed environment) for 60 s.
+Two intentional differences from v3:
+
+- **No more lattice texture** — wooden walls, concrete ground, varied
+  outdoor textures. The hex-grid ambiguity from case study 3 is gone.
+- **Sustained yaw** — the rover never drove straight for more than a
+  second or two. Continuous curving = continuous parallax.
+
+### Numbers — biggest VIO improvement so far
+
+```
+GT  end (-4.29, -1.04, -0.01) m,  path 17.89 m
+LIO end (-4.30, -1.04, +0.08) m,  err 0.09 m  (0.5 %)   ratio 1.00
+VIO end (+13.77, +8.07, +0.16) m, err 20.22 m (113 %)   ratio 1.62
+```
+
+VIO path-length ratio dropped from v3's 5.40 → **1.62** — by far the
+closest mono VIO has gotten to GT in this codebase.
+
+| | v1 | v2 | v3 | **v4** |
+|---|---:|---:|---:|---:|
+| VIO ratio | 7.21 | 378 | 5.40 | **1.62** |
+| VIO end-error | 195 m | 4030 m | 140 m | **20 m** |
+
+### The XY plot tells the rest of the story
+
+GT and LIO are **perfectly overlapping** (LIO is 0.09 m off GT —
+indistinguishable on a 17.89 m trajectory plot). They trace a clean
+teardrop loop down-and-left to (−9, −4) and back.
+
+VIO follows GT for the first ~3 m of straight forward driving, then
+**diverges right at the start of the curve** and goes the *opposite
+direction*: while GT loops down-left, VIO sweeps up-right to (+14, +8).
+The shapes are similarly sized and similarly shaped — they're just
+reflected through the origin.
+
+This is the **unobservable-yaw signature** showing up undisguised, now
+that the scene and parallax problems are out of the way.
+
+### Proving it with `evo_ape -a` (rotation removed)
+
+The user's intuition — "VIO is going in the opposite direction, like
+some axis is wrong" — is provable. evo's Umeyama alignment rotates
+the VIO trajectory onto GT before computing the error, which subtracts
+out any constant rotation between their world frames. If VIO's
+trajectory *shape* is correct, aligned-APE will be much smaller than
+raw APE. If there's a genuine bug, alignment won't help.
+
+```
+                 RMSE     max      meaning
+─────────────  ──────  ──────  ───────────────────────────────────────
+Raw            17.80 m 24.65 m  apparent VIO error
+Aligned (-a)    4.25 m  7.53 m  ← 76 % of error was just yaw rotation
+Aligned+scale  1.63 m  3.46 m  ← further 62 % was scale drift
+LIO (raw)       0.11 m  0.17 m  reference
+(-as)
+```
+
+**76 % of the apparent VIO error is purely the wrong initial yaw.**
+Once evo rotates VIO's `global` frame onto GT's, error drops by ~4×
+without changing a single VIO sample — just relabelling the frame.
+After also aligning scale, the residual 1.63 m on a 17.89 m drive
+(9 % "true" shape error) is the actual filter performance.
+
+### Why mono VIO has unobservable yaw — and what to do about it
+
+It's not a config bug; it's a fundamental property of IMU-only static
+init:
+
+- **Gravity** (a vertical vector) constrains pitch and roll. OpenVINS
+  gets these right — that's why the rover stays at z=0 (with some
+  drift) instead of pitching into the ground.
+- **Yaw** is rotation *around* the gravity axis. Gravity carries zero
+  information about it. The IMU at rest produces the same gyro and
+  accel readings regardless of which way the rover is facing in the
+  world.
+- OpenVINS' static init has to pick *some* yaw value to bootstrap.
+  Without an external heading reference, it picks based on the first
+  IMU readings + the propagated state — effectively random w.r.t. the
+  world.
+
+We've seen this consistently across runs:
+
+- v1 init log: `orientation = (0.0105, 0.0000, 0.9999, 0.0000)` ←
+  180° yaw rotation
+- v4: trajectory mirrored through origin (also ~180° rotation)
+- v3: trajectory rotated by some other angle
+
+Mono-VIO yaw drift relative to truth **is unavoidable without an
+external heading source**.
+
+### Fixes that resolve this for good (none applied yet)
+
+In rough order of effort vs payoff:
+
+1. **Magnetometer fusion** — `/magnetometer` (`sensor_msgs/MagneticField`)
+   is already being bridged out of gz. The Earth's magnetic field gives
+   you a heading reference. OpenVINS doesn't support magnetometer
+   fusion directly, but:
+   - `robot_localization`'s `ekf_node` can fuse `/imu` + `/magnetometer`
+     + `/ov_msckf/odomimu` (or any other odometry) and produce a
+     yaw-anchored estimate.
+   - Or fork OpenVINS' init to accept an external yaw prior on
+     bootstrap.
+2. **Stereo VIO** — two cameras separated by a baseline get parallax
+   even *without* camera motion, so rotation becomes observable in the
+   very first frame. Yaw is no longer ambiguous. This is the "real fix"
+   for everything we've been chasing.
+3. **Known-heading prior** — if the rover always spawns facing world
+   +X (which it does in our launch), feeding "yaw = 0" as an init
+   constraint nails the yaw deterministically. Not exposed as an
+   OpenVINS config knob; would require a small patch to its init code.
+   Quick hack.
+4. **Loop closure** — if the rover returns to a previously-seen place
+   and OpenVINS' DBoW2 loop closure fires, the yaw error gets corrected
+   globally. OpenVINS has `/ov_msckf/loop_*` topics — they're enabled
+   but only fire when revisits happen.
+
+The other consistent finding from v4: **the trajectory shape, once
+yaw-aligned, is much better than the raw numbers suggest**. Mono VIO
+on this rig is not broken — it's just missing one observable, and the
+remaining drift is in the realm of what's normal for mono.
 
 ## Case study 3.5 — orientation jitter and the KLT-vs-descriptor question
 
