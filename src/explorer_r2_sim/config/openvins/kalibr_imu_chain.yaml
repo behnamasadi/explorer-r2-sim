@@ -16,8 +16,8 @@
 # OpenVINS' "kalibr" IMU model also requires intrinsic-correction matrices
 # (Tw / Ta / R_IMUtoACC / R_IMUtoGYRO / Tg). In a perfect-sim IMU there's
 # nothing to correct, so Tw/Ta and the R_* are identity, and Tg (gyro
-# g-sensitivity) is zero. They must still be present — OpenVINS segfaults
-# if they're missing from the YAML.
+# g-sensitivity) is zero. They must still be present — OpenVINS errors
+# out if they're missing from the YAML.
 
 imu0:
   T_i_b:
@@ -36,43 +36,28 @@ imu0:
 
   # Intrinsic-correction matrices. Identity / zero for a perfect-sim IMU.
   # Tw : 3x3 scale + cross-coupling for the gyroscope.
-  Tw: !!opencv-matrix
-     rows: 3
-     cols: 3
-     dt: d
-     data: [1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0]
+  Tw:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
   # Ta : 3x3 scale + cross-coupling for the accelerometer.
-  Ta: !!opencv-matrix
-     rows: 3
-     cols: 3
-     dt: d
-     data: [1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0]
+  Ta:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
   # R_IMUtoACC : rotation from IMU body frame to accelerometer sensing frame.
-  R_IMUtoACC: !!opencv-matrix
-     rows: 3
-     cols: 3
-     dt: d
-     data: [1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0]
+  R_IMUtoACC:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
   # R_IMUtoGYRO : rotation from IMU body frame to gyro sensing frame.
-  R_IMUtoGYRO: !!opencv-matrix
-     rows: 3
-     cols: 3
-     dt: d
-     data: [1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0]
+  R_IMUtoGYRO:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
   # Tg : 3x3 g-sensitivity of the gyroscope (rad/s per m/s² of acceleration).
   # Zero for a perfect IMU — the gyro is not affected by linear acceleration.
-  Tg: !!opencv-matrix
-     rows: 3
-     cols: 3
-     dt: d
-     data: [0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0]
+  Tg:
+    - [0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
