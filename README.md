@@ -45,9 +45,10 @@ upstream OSRF support for them is winding down.
 ```
 ros2_ws/
 ├── src/
-│   └── explorer_r2_sim/        ← cave/tunnel sim + sensor suite + VIO wiring
+│   └── explorer_r2_sim/        ← cave/tunnel sim + sensor suite + VIO/LIO wiring
 ├── third_party/
-│   └── open_vins/              ← OpenVINS VIO (git submodule, optional)
+│   ├── open_vins/              ← OpenVINS VIO    (git submodule, optional)
+│   └── FAST_LIO/               ← hku-mars/FAST_LIO, LIO (git submodule, optional, ROS2 branch)
 ├── build/   install/   log/    ← colcon outputs (only populated if you build
 │                                 on the host instead of via Docker)
 └── README.md                   ← you are here
@@ -58,16 +59,52 @@ ros2_ws/
 
 ## Clone
 
-```bash
-# Fresh clone — pulls OpenVINS into third_party/ in one shot:
-git clone --recurse-submodules <repo-url> ~/ros2_ws
+Both submodules (`third_party/open_vins` for VIO and `third_party/FAST_LIO`
+for LIO) are **optional** — the simulator, bridge, RViz, and teleop all
+build without either of them. Choose the clone style that fits what you
+need today; you can always add the other submodule later.
 
-# Already cloned without submodules? Initialise OpenVINS now:
-cd ~/ros2_ws && git submodule update --init --recursive
+### Fresh clone with both submodules
+
+```bash
+git clone --recurse-submodules git@github.com:behnamasadi/explorer-r2-sim.git ~/ros2_ws
 ```
 
-OpenVINS is optional. If you only need the simulator + bridge + RViz + teleop,
-skip the submodule init and the sim will build without VIO support.
+### Fresh clone, sim only — add VIO / LIO later as needed
+
+```bash
+git clone git@github.com:behnamasadi/explorer-r2-sim.git ~/ros2_ws
+```
+
+### Adding (or updating) the submodules later
+
+If you cloned without `--recurse-submodules`, or you initially skipped
+one and want to add it now:
+
+```bash
+cd ~/ros2_ws
+
+# Add OpenVINS (VIO) only:
+git submodule update --init third_party/open_vins
+
+# Add FAST_LIO (LIO) only:
+git submodule update --init third_party/FAST_LIO
+
+# Or both at once:
+git submodule update --init --recursive
+
+# To pull a newer commit on the submodule's tracked branch:
+git submodule update --remote third_party/FAST_LIO   # follows ROS2 branch
+git submodule update --remote third_party/open_vins  # follows default branch
+```
+
+After initialising a submodule, rebuild the image so the new source is
+picked up:
+
+```bash
+cd ~/ros2_ws/src/explorer_r2_sim
+docker compose build sim
+```
 
 ## explorer_r2_sim — what it is
 
@@ -137,7 +174,30 @@ ROS 2 ↔ GZ bridge, RViz layouts, joystick teleop, and OpenVINS VIO.
 | `/ov_msckf/points_msckf`       | `sensor_msgs/PointCloud2`        | OpenVINS features |
 | `/joy`                         | `sensor_msgs/Joy`                | Logitech F310    |
 
-## Quickstart — explorer_r2_sim
+## Running modes
+
+The simulator and the two odometry packages are decoupled. Start with mode 1;
+add VIO and/or LIO on top whenever you want — they attach to a running sim
+without restarting it.
+
+| Mode | What it gives you | Recipe |
+|------|------------------|--------|
+| **1. Sim only** (no sensor fusion) | gz sim + bridge + RViz + teleop. Drive the robot, see raw sensor topics. | [Quickstart — Mode 1](#quickstart--mode-1-sim-only) |
+| **2. + OpenVINS (VIO)** | Adds OpenVINS to the running sim. Its odometry + trajectory show up in the same RViz. | [Run VIO — Mode 2](#run-vio--mode-2-sim--openvins) |
+| **3. + FAST_LIO (LIO)** | Adds FAST_LIO. Its odometry + map show up in the same RViz. | [Run LIO — Mode 3](#run-lio--mode-3-sim--fast_lio) |
+
+> **GNSS (`/navsat`, `sensor_msgs/NavSatFix` @ 10 Hz) and magnetometer
+> (`/magnetometer`, `sensor_msgs/MagneticField`)** are bridged out of the
+> sim by default — no extra mode needed. To *fuse* them with wheel odom +
+> IMU into a single drift-corrected pose estimate, drop in
+> `ros-jazzy-robot-localization` and wire `navsat_transform_node` +
+> `ekf_node` (see the `robot_localization` docs).
+
+There is **one** RViz layout (`rviz/sim.rviz`), opened by the sim in mode 1.
+It already has displays for the VIO and LIO topics, sitting empty; when you
+launch mode 2 or 3, those displays light up. Modes 2 and 3 can run together.
+
+## Quickstart — Mode 1: sim only
 
 ```bash
 cd ~/ros2_ws/src/explorer_r2_sim
@@ -145,12 +205,69 @@ cd ~/ros2_ws/src/explorer_r2_sim
 # Allow X clients from the container.
 xhost +local:root
 
-# Build (~3-5 min first time; openvins is the slowest step).
+# Build (~3-5 min first time).
 docker compose build sim
 
 # Bring it up: gz sim + bridge + RViz + joy + teleop_twist_joy.
 docker compose up
 ```
+
+### Worlds
+
+The `world:=` launch argument accepts a **preset short name**, a **local
+`.sdf` path**, or a **Gazebo Fuel URL**. The presets are defined in
+`WORLD_PRESETS` at the top of `launch/cave.launch.py`:
+
+| Preset             | Source                                                                | Robot included? | Notes |
+|--------------------|-----------------------------------------------------------------------|-----------------|-------|
+| `tunnel` (default) | `worlds/tunnel.sdf`                                                   | Yes             | 119-tile SubT tunnel network, hand-assembled from OpenRobotics Fuel tiles. |
+| `cave`             | `worlds/cave.sdf`                                                     | Yes             | Smaller open SubT cave, hand-assembled. Lighter on the GPU. |
+| `rubicon`          | [`abdsemiz/Rubicon World`](https://app.gazebosim.org/abdsemiz/fuel/worlds/Rubicon%20World) | No              | Third-party Fuel world. Spawn the robot separately (see below). |
+| `tugbot_depot`     | [`Aiosama/tugbot_depot 1`](https://app.gazebosim.org/Aiosama/fuel/worlds/tugbot_depot%201) | No              | Same — third-party Fuel world. |
+| `singapore_river`  | [`monkescripts/Singapore River Robot X 2026`](https://app.gazebosim.org/monkescripts/fuel/worlds/Singapore%20River%20Robot%20X%202026%20world) | No              | Same. |
+
+The `tunnel` and `cave` SDFs are originals in this repo — they wrap the
+upstream Fuel tile assets and `<include>` the EXPLORER_R2 model inline,
+which is why the robot spawns automatically. The third-party Fuel worlds
+are loaded as-is; the EXPLORER_R2 model has to be spawned into them after
+the world is up.
+
+Pick a preset:
+```bash
+# Launch the cave preset:
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py world:=cave
+
+# Launch a third-party Fuel world (robot spawn deferred — see below):
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py world:=rubicon
+```
+
+Or pass a path / Fuel URL directly:
+```bash
+# Local SDF in the install share:
+ros2 launch explorer_r2_sim cave.launch.py \
+  world:=/ws/install/explorer_r2_sim/share/explorer_r2_sim/worlds/cave.sdf
+
+# Any Gazebo Fuel world URL (the app.gazebosim.org → fuel.gazebosim.org/1.0
+# rewrite is handled by the launch):
+ros2 launch explorer_r2_sim cave.launch.py \
+  world:=https://app.gazebosim.org/OpenRobotics/fuel/worlds/Empty
+```
+
+#### Spawning the rover into a third-party Fuel world
+
+For `rubicon`, `tugbot_depot`, `singapore_river`, or any external SDF that
+doesn't `<include>` the EXPLORER_R2 model, spawn the rover after the
+world is up:
+
+```bash
+docker compose exec sim ros2 run ros_gz_sim create \
+  -name explorer_r2 \
+  -file /ws/install/explorer_r2_sim/share/explorer_r2_sim/models/explorer_r2/model.sdf \
+  -x 0 -y 0 -z 0.4
+```
+
+Tune `-x -y -z` to a free spot in the new world (raycast into a wall and
+the rover never gets up).
 
 ### How to drive the robot
 
@@ -200,18 +317,57 @@ docker compose exec sim rqt --standalone rqt_robot_steering
 
 In the rqt window set the topic to `/cmd_vel` (default) and slide.
 
-### Run VIO
+## Run VIO — Mode 2: sim + OpenVINS
+
+Prerequisite: the `open_vins` submodule is initialised (see
+[Clone](#clone)) and you have a running sim from [Mode 1](#quickstart--mode-1-sim-only).
+
+OpenVINS is environment-agnostic — it consumes `/imu` and
+`/rs_front/image` regardless of which world the rover is in. It publishes
+to the `/ov_msckf/*` topics that the sim's RViz layout already has
+displays for, so **don't open a second RViz** — the existing one will
+populate as soon as the VIO node starts.
+
+`compose exec` needs the `sim` container to already be running, so this
+is a two-terminal recipe (both terminals `cd` into the compose dir):
 
 ```bash
-docker compose exec sim ros2 launch explorer_r2_sim vio.launch.py rviz:=true
+# Terminal 1 — bring up the sim (mode 1, leave running):
+cd ~/ros2_ws/src/explorer_r2_sim
+docker compose up
+
+# Terminal 2 — attach OpenVINS to the running sim:
+cd ~/ros2_ws/src/explorer_r2_sim
+docker compose exec sim ros2 launch explorer_r2_sim vio.launch.py
 ```
 
-Switch from the tunnel to the smaller cave:
+Prefer a single terminal? Use detached mode:
 ```bash
-docker compose run --rm sim \
-  ros2 launch explorer_r2_sim cave.launch.py \
-    world:=/ws/install/explorer_r2_sim/share/explorer_r2_sim/worlds/cave.sdf
+cd ~/ros2_ws/src/explorer_r2_sim
+docker compose up -d
+docker compose exec sim ros2 launch explorer_r2_sim vio.launch.py
+docker compose logs -f sim    # tail sim logs in this terminal
 ```
+
+## Run LIO — Mode 3: sim + FAST_LIO
+
+Prerequisite: the `FAST_LIO` submodule is initialised (see
+[Clone](#clone)) and you have a running sim from [Mode 1](#quickstart--mode-1-sim-only).
+
+FAST_LIO is environment-agnostic — it consumes `/lidar/points` + `/imu`
+and publishes its own odometry, path, and map. The sim's RViz layout
+already has displays for those topics, so no second RViz is needed.
+
+```bash
+# Terminal 1 — sim already running from Mode 1.
+
+# Terminal 2 — attach FAST_LIO to the running sim:
+cd ~/ros2_ws/src/explorer_r2_sim
+docker compose exec sim ros2 launch explorer_r2_sim lio.launch.py
+```
+
+Mode 2 and Mode 3 can run together — open a third terminal and launch the
+other one. They don't share topics.
 
 ## Seeing OpenVINS output + comparing against ground truth
 
@@ -229,7 +385,9 @@ docker compose run --rm sim \
 
 ### Live visual comparison in RViz
 
-`rviz/vio.rviz` overlays three things in the same orbit view:
+The single `rviz/sim.rviz` layout overlays three things in the same orbit
+view (the VIO displays sit empty in Mode 1 and light up when you start
+Mode 2):
 
 - **Red arrow**  → `/model/explorer_r2/odometry` — wheel odometry from the
   DiffDrive plugin (drifts during turns / wheel slip; representative of
@@ -240,87 +398,13 @@ docker compose run --rm sim \
   carrying every dynamic model's true pose). Add a TF display in RViz
   pinned to frame `explorer_r2` to see the absolute true position.
 
-```bash
-# Bring up the sim (terminal 1):
-cd ~/ros2_ws/src/explorer_r2_sim && docker compose up
-
-# Start OpenVINS + its RViz overlay (terminal 2):
-docker compose exec sim ros2 launch explorer_r2_sim vio.launch.py rviz:=true
-```
-
-Drive the robot a bit (joystick, keyboard, or rqt_robot_steering). After
-~10 seconds of motion the green VIO trail should snake along behind the
-red wheel-odom trail — divergence between green and red over time tells
-you how much wheel odometry is drifting, while divergence between green
-and the ground-truth TF tells you how much VIO is drifting.
-
-### Quantitative comparison (rosbag → evo)
-
-```bash
-# Record both estimates + ground truth while driving (terminal 3):
-docker compose exec sim bash -c "
-  source /ws/install/setup.bash &&
-  ros2 bag record -o /ws/vio_run \
-    /ov_msckf/odomimu \
-    /model/explorer_r2/odometry \
-    /ground_truth/pose
-"
-
-# When done, install evo on the host or in a python venv:
-pip install evo --user
-
-# Convert /ground_truth/pose (TFMessage) into a Path topic if needed, or
-# extract directly with evo's bag interface:
-evo_traj bag2 ~/ros2_ws/src/explorer_r2_sim/vio_run \
-  --topic_names /ov_msckf/odomimu /model/explorer_r2/odometry \
-  --plot --plot_mode xy
-```
-
-For the absolute-pose-error (APE) metric, you'll need both trajectories
-on the same time base — the simplest workflow is:
-1. Convert each topic to TUM format (`evo_traj bag2 … --save_as_tum`).
-2. Pick the ground-truth TUM file as `--ref` and run
-   `evo_ape tum gt.tum est.tum -va --plot`.
-
-### Quick sanity check (no evo, just terminal)
-
-```bash
-# Live distance between VIO estimate and ground truth (publishes /vio_error):
-docker compose exec sim bash -c '
-  source /ws/install/setup.bash &&
-  python3 - <<PY
-import rclpy, math
-from rclpy.node import Node
-from nav_msgs.msg import Odometry
-from tf2_msgs.msg import TFMessage
-
-class Cmp(Node):
-  def __init__(self):
-    super().__init__("vio_cmp")
-    self.gt = None; self.est = None
-    self.create_subscription(TFMessage, "/ground_truth/pose", self.cb_gt, 50)
-    self.create_subscription(Odometry, "/ov_msckf/odomimu", self.cb_est, 50)
-    self.create_timer(1.0, self.report)
-  def cb_gt(self, m):
-    for t in m.transforms:
-      if t.child_frame_id == "explorer_r2":
-        self.gt = t.transform.translation
-  def cb_est(self, m):
-    self.est = m.pose.pose.position
-  def report(self):
-    if self.gt and self.est:
-      d = math.dist((self.gt.x, self.gt.y, self.gt.z),
-                    (self.est.x, self.est.y, self.est.z))
-      self.get_logger().info(f"||gt - vio|| = {d:.3f} m")
-
-rclpy.init(); n = Cmp(); rclpy.spin(n)
-PY
-'
-```
-
-This prints the live position error in metres every second. A healthy
-mono-VIO run on this rig stays under a metre of drift over a few-tens-of-
-metre traverse.
+Bring up the sim + OpenVINS using the recipe in
+[Run VIO — Mode 2](#run-vio--mode-2-sim--openvins) above, then drive the
+robot a bit (joystick, keyboard, or rqt_robot_steering). After ~10
+seconds of motion the green VIO trail should snake along behind the red
+wheel-odom trail — divergence between green and red over time tells you
+how much wheel odometry is drifting, while divergence between green and
+the ground-truth TF tells you how much VIO is drifting.
 
 ## Exact sim calibration (cam ↔ IMU ↔ LiDAR)
 
@@ -405,20 +489,13 @@ T_imu_cam:
 (Rows: rotation block converts optical→base_link gz-frame; last column is
 the camera's translation in base_link.)
 
-### LIO recommendation
+### LIO — FAST_LIO
 
-Three solid options, ranked by what I'd reach for first on this stack:
-
-| Package    | Strengths                              | Weakness                          |
-|------------|----------------------------------------|-----------------------------------|
-| **DLIO**   | Modern, ROS 2 native, very fast & robust, no IMU pre-integration tuning needed | Cave-style featureless walls can stress it |
-| FAST-LIO2  | Slightly more accurate in feature-rich scenes, well-documented | ROS 2 fork is community-maintained |
-| LIO-SAM    | Most mature, integrates GPS easily     | Heavier; tuning matters; older code |
-
-**Recommendation: DLIO.** Your earlier `tunnel` cheat-sheet already had a
-`dlio.launch.py` line so you've used it before; it's a drop-in fit for
-this rig (publishes on `/lidar/points` + `/imu`, exactly what DLIO
-expects).
+LIO ships as an optional submodule at `third_party/FAST_LIO/`, cloned
+from [`hku-mars/FAST_LIO`](https://github.com/hku-mars/FAST_LIO) and
+pinned to its `ROS2` branch. The colcon package is `fast_lio`. It
+subscribes to `/lidar/points` + `/imu` and publishes its own odometry +
+map, so it's environment-agnostic exactly like VIO.
 
 For LiDAR-IMU odometry you need the **lidar-IMU** SE(3). For our rig:
 
@@ -430,7 +507,7 @@ T_imu_lidar:
   - [0, 0, 0, 1]
 ```
 
-YAML for FAST-LIO2 (`config/lio.yaml` when added):
+YAML for `fast_lio` (`config/lio.yaml` when wired):
 
 ```yaml
 mapping:
@@ -444,8 +521,8 @@ mapping:
   b_gyr_cov: 8.0e-7
 ```
 
-When the LIO package lands, drop a `lio.launch.py` next to `vio.launch.py`
-and remap the topics — the rig already publishes everything LIO needs.
+Drop a `lio.launch.py` next to `vio.launch.py` that loads the config and
+remaps the topics — the rig already publishes everything `fast_lio` needs.
 
 ## Native install (no Docker)
 
@@ -474,8 +551,9 @@ sudo apt update
 sudo apt install -y gz-harmonic \
   ros-jazzy-ros-gz-bridge ros-jazzy-ros-gz-sim ros-jazzy-ros-gz-image
 
-# 3. Teleop + GUI tools:
+# 3. Teleop + GUI tools (xterm is needed for cave.launch.py teleop:=true):
 sudo apt install -y \
+  xterm \
   ros-jazzy-teleop-twist-keyboard ros-jazzy-joy ros-jazzy-teleop-twist-joy \
   ros-jazzy-rqt-robot-steering ros-jazzy-rqt ros-jazzy-rqt-graph
 
@@ -496,41 +574,25 @@ sed -i 's|cv_bridge/cv_bridge\.h|cv_bridge/cv_bridge.hpp|' \
   third_party/open_vins/ov_core/src/test_tracking.cpp
 ln -sf ../third_party/open_vins ~/ros2_ws/src/open_vins   # let colcon see it
 
-# 6. Build the workspace:
+# 6. (Optional) FAST_LIO for LIO — submodule already on the ROS2 branch:
+git submodule update --init --recursive third_party/FAST_LIO
+sudo apt install -y libpcl-dev ros-jazzy-pcl-conversions ros-jazzy-pcl-ros
+ln -sf ../third_party/FAST_LIO ~/ros2_ws/src/fast_lio
+
+# 7. Build the workspace:
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install \
-  --packages-select explorer_r2_sim ov_core ov_init ov_msckf
+  --packages-select explorer_r2_sim ov_core ov_init ov_msckf fast_lio
 source install/setup.bash
 
-# 7. Run:
+# 8. Run:
 ros2 launch explorer_r2_sim cave.launch.py
 ```
 
 For Rolling + Ionic instead of Jazzy + Harmonic, swap `jazzy` → `rolling`
 and `gz-harmonic` → `gz-ionic`. Plugin filenames stay the same
 (`gz-sim-*-system`).
-
-## Troubleshooting
-
-- **RViz says "no transform" / orange status**: confirm `/tf` is being
-  published (`ros2 topic hz /tf` should be ~50 Hz). If not, check that gz
-  is running (`docker compose ps`).
-- **Pointcloud "not available"**: usually a fixed-frame mismatch. The
-  default fixed frame is `explorer_r2/odom`.
-- **Wheels sinking into the floor**: the world's vehicle spawn pose must
-  set `Z=0.4` because `<include><pose>` overrides the model's internal
-  `0.398` Z offset.
-- **Lidar sees the robot itself**: front_laser sits at `z=1.05` above
-  `base_link` to clear the sensor payload — if you lower it below ~0.65
-  it'll raycast into the chassis.
-- **OpenVINS won't build on Jazzy**: header rename (`.h` → `.hpp`) for
-  `image_transport`, `cv_bridge`, `tf2_geometry_msgs`. The Dockerfile
-  patches them with `sed` after cloning — see
-  `src/explorer_r2_sim/docker/sim.Dockerfile`.
-- **Joystick not detected**: `ls /dev/input/js*` on the host. The
-  compose file bind-mounts `/dev/input:/dev/input`. Container must run
-  with `privileged: true` (default).
 
 ## License
 
