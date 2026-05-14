@@ -56,9 +56,20 @@ class GroundTruthToPath(Node):
             f"in frame '{self.fixed_frame}' (origin captured on first sample)")
 
     def _on_tf(self, msg: TFMessage) -> None:
-        for tf in msg.transforms:
-            if tf.child_frame_id != self.target_frame:
-                continue
+        # ros_gz bridge maps gz Pose_V → tf2_msgs/TFMessage but leaves the
+        # transform names blank — frame_id and child_frame_id are both
+        # empty strings. So we can't filter by target_frame the obvious
+        # way. Fall back: take the transform whose name matches if any do,
+        # otherwise take the FIRST transform in the list (gz publishes
+        # the robot first in /world/<w>/dynamic_pose/info because it's
+        # the only dynamic entity in our worlds).
+        chosen = next(
+            (tf for tf in msg.transforms if tf.child_frame_id == self.target_frame),
+            msg.transforms[0] if msg.transforms else None,
+        )
+        if chosen is None:
+            return
+        for tf in [chosen]:
             t = tf.transform.translation
             if self.origin is None:
                 self.origin = (t.x, t.y, t.z)
