@@ -435,6 +435,176 @@ auto-interpretation block is usually self-explanatory.
 
 ---
 
+## Aside: APE, RPE, and Umeyama alignment — what the numbers mean
+
+When you read "VIO RMSE is 0.48 m" in this doc or in any VIO paper,
+it's almost never the raw error. Here's what each metric actually is
+and why we report aligned values most of the time.
+
+### Setup
+
+Two time-synchronised trajectories:
+
+| | |
+|---|---|
+| **GT** | `{ Tgt(t1), Tgt(t2), …, Tgt(tN) }` — each `Tgt` is an SE(3) pose (position + orientation) of the rover at time `ti` |
+| **Est** | `{ Test(t1), …, Test(tN) }` — same timestamps, from VIO/LIO |
+
+### APE — Absolute Pose Error
+
+The per-sample error at timestamp `ti` is
+
+```
+Ei = Tgt(ti)⁻¹ ∘ Test(ti)         (full SE(3) form)
+ei = pgt(ti)   - pest(ti)         (position-only form, ‖·‖ in metres)
+```
+
+Aggregate by RMSE:
+
+```
+APE_RMSE = √( (1/N) · Σ ‖ei‖² )
+```
+
+`max`, `mean`, `median` are computed the same way. `evo_ape` outputs
+all of them.
+
+**Catch with raw APE**: it implicitly assumes `Tgt` and `Test` are in the
+*same world frame*. They almost never are.
+
+- `Tgt` is in the gz world frame (x-forward, y-left, z-up at the world origin).
+- `Test` is in whatever frame the estimator chose at init. For OpenVINS that's `global`; for VINS-Fusion it's `world`; for FAST_LIO it's `camera_init`. These frames are **arbitrarily rotated** relative to gz world because IMU-only init can't determine yaw (gravity has no yaw component) — the unobservable-yaw problem from
+[the headline conclusion](#why-vio-trajectories-look-so-bad--the-headline-conclusion).
+
+So a *correct* estimator with a wrong-yawed world frame still gives a
+huge raw APE. The error is measuring the frame mismatch, not the
+estimator quality.
+
+### Umeyama alignment — strip out the unobservable frame offset
+
+Umeyama (1991) gives a closed-form rigid (or similarity) transform `S`
+that minimises
+
+```
+Σ ‖ Tgt(ti) - S ∘ Test(ti) ‖²
+```
+
+- `-a` rigid alignment:  S = (R, t)  — removes initial rotation + translation
+- `-as` similarity alignment:  S = (s·R, t)  — removes rotation + translation + uniform scale
+
+`-as` adds a single scalar scale factor on top of `-a`. For mono VIO,
+scale is also weakly observable, so `-as` is the metric used to
+report "true trajectory shape error" in mono benchmarks.
+
+After alignment, the aligned APE is
+
+```
+APE_RMSE_aligned = √( (1/N) · Σ ‖ Tgt(ti) - S ∘ Test(ti) ‖² )
+```
+
+This number is what mono-VIO papers report. It strips out the parts
+of the trajectory the estimator fundamentally *cannot* determine
+without an external heading sensor, leaving only the *avoidable* error
+(drift, scale drift, bias errors, tracker mistakes).
+
+### RPE — Relative Pose Error
+
+A second metric used in published benchmarks. For a window `Δ`:
+
+```
+Erel(ti) = (Tgt(ti)⁻¹ ∘ Tgt(ti+Δ)) ∘ (Test(ti)⁻¹ ∘ Test(ti+Δ))⁻¹
+```
+
+Each `Erel` measures how well the estimator captures *incremental*
+motion over Δ seconds. RPE is *unaffected* by initial-yaw and scale
+ambiguities because both trajectories are made relative to time `ti`.
+Lower RPE = more locally consistent estimator. KITTI's headline
+benchmark is RPE-based for this reason.
+
+### Which to use when
+
+| Goal | Metric | Why |
+|---|---|---|
+| Compare estimator *shapes* against truth in this project | **`-as` aligned APE** | Removes the unobservable yaw + scale; what mono VIO papers report |
+| Compare estimators against each other on the same bag | **`-a` aligned APE** | Both estimators have arbitrary yaw, so align both to GT and they're comparable |
+| Measure *short-term* drift | **RPE** | Doesn't care about initial frame, measures local consistency |
+| "Does the trail overlay GT in RViz?" | **raw APE** | But useless as a quality metric without a heading sensor |
+
+For our project, **aligned APE (`-a` or `-as`) is the honest number**.
+The raw APE dominates the v1-v5 case-study tables because it's
+visceral and matches what you see in RViz — but the conclusions are
+based on aligned numbers.
+
+## Aside: ROVIO on the drone didn't have "arbitrary yaw" — why?
+
+User raised the perfectly fair question: their colleague ran ROVIO on
+a drone with **6-axis IMUs** (no magnetometer) and **two IMUs mounted
+in opposite orientations** for bias cancellation, and never saw the
+"trajectory is in the opposite direction" failure we keep observing
+on this rover. What's different?
+
+The honest answer is three things, none of which is the IMU layout:
+
+1. **They were comparing ROVIO to ROVIO.** With no ground truth in
+   the field, you can't *see* the arbitrary yaw offset — the
+   estimator's trail is in its own internal world frame, and as long
+   as motion is consistent within that frame, everything "looks
+   right." We see the 180° flip on this rig because we have gz GT
+   and compute raw `‖VIO − GT‖`. The colleague's drone almost
+   certainly had the same offset, invisible.
+2. **Drone motion is parallax-rich.** Constant rotation + translation
+   in 3D means ROVIO's camera-update loop pins yaw to *some*
+   consistent value within seconds of takeoff, even though that
+   value is arbitrary relative to north. Once pinned, it stays.
+3. **Two opposing IMUs cancel bias drift.** With opposite mounting,
+   accelerometer/gyro biases of the two units roughly cancel when
+   averaged. That stops the wrong-yaw decision from *compounding*
+   over time — whatever yaw was chosen at init stays stable for the
+   whole flight. **But this doesn't add a yaw observation**; it just
+   keeps the wrong yaw from drifting further wrong.
+
+Aligned APE on the colleague's setup, if you'd had a Vicon system to
+measure ground truth, would have shown the same yaw rotation as we're
+seeing here. It just never had to be reported, so it didn't matter
+for navigation.
+
+**Conclusion for our project**: the arbitrary-yaw effect is
+fundamental to any mono-VIO (or stereo-VIO without heading sensor)
+when reported against a fixed-world ground truth. It's an *evaluation
+artefact*, not a flaw in the estimator. The aligned-APE numbers we
+report in v4 (4.25 m), v6 (0.48 m), and ongoing runs are the honest
+quality measures. The "trail goes opposite direction in RViz" view is
+the unavoidable cost of having ground truth.
+
+## What you should do next — three concrete options
+
+In rough order of cost vs payoff, **after the current Step 2
+(VINS-Fusion) test lands**:
+
+1. **Record v7 with the current setup** (OpenVINS-stereo + VINS-Fusion
+   + LIO + GT running in parallel) and let the head-to-head table
+   below it speak. Aligned APE for each, ranked. This is the
+   *single most informative* thing you can do in the next 30
+   minutes. If VINS-Fusion's motion-based init plus loop closure
+   produce a meaningfully smaller aligned APE than OpenVINS, we
+   know algorithm choice matters and Step 3 (Kimera) is worth doing.
+   If the two are roughly tied, algorithm choice barely matters here
+   and the next lever is the *sensor stack* (magnetometer or radar).
+
+2. **Add magnetometer fusion via `robot_localization`** if you want
+   the trail to *visually overlay GT* in RViz (raw APE that matches
+   aligned APE). `/magnetometer` is already published. This is the
+   only thing in the current stack that fixes the arbitrary-yaw
+   offset at the source rather than papering over it with alignment.
+   ~2 hours of integration. Doesn't help estimator quality per se,
+   but makes RViz output match GT visually — useful for demos.
+
+3. **Step 3: add Kimera-VIO** as planned. Worth doing only if v7
+   shows VINS-Fusion clearly different from OpenVINS — otherwise
+   Kimera is unlikely to be transformatively different from either.
+
+**My recommendation**: do (1) first this session. It's the cheapest
+information. Decide between (2) and (3) based on what v7 shows.
+
 ## Aside: what is parallax, and why is forward driving the worst case?
 
 The short version: **a monocular camera estimates depth from how
