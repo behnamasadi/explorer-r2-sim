@@ -24,6 +24,7 @@ This doc has three parts:
 | `run_20260514T162146Z` (v2)     | 58.52 m | **0.15 m (0.3 %)** | **1.01** | **4030 m (6887 %)** | **378** | Figure-8. CLAHE + aggressive tracker → catastrophic VIO blow-up. Reverted. |
 | `run_20260514T182108Z` (v3)     | 51.28 m | **0.16 m (0.3 %)** | **1.01** | 139.75 m (272 %) | **5.40** | Tracker reverted to defaults + camera bumped to 640×480. **70× better than v2**, slightly better than v1. Z-axis drift visible — still a parallax/scene-texture problem ([case study 3](#case-study-3--640480-revert-mono-vio-back-to-baseline)). |
 | `run_20260514T184552Z` (v4)     | 17.89 m | **0.09 m (0.5 %)** | **1.00** | 20.22 m (113 %) | **1.62** | **Circle outside the tunnel, no lattice texture.** VIO ratio 5.40 → 1.62. Remaining 113 % end-pos error is almost entirely the unobservable initial yaw — Umeyama-aligned APE would be tiny ([case study 4](#case-study-4--out-of-the-tunnel-circle-mono-vio-finally-works)). |
+| `run_20260514T210126Z` (v5)     | 23.17 m | 0.13 m (0.6 %)     | 1.01     | 33.61 m (145 %) | 3.59     | **Stereo OpenVINS** (added rs_front_right camera, use_stereo:true). Surprise: *worse* than v4 mono. Two confounders — sim RTF dropped (bandwidth saturated by 2× 640×480@30) so every estimator got less data, AND static init fired again in 1.3 ms and converged to 180° yaw. Stereo never got a chance to fix yaw. Fix shipped: `init_imu_thresh: 50.0` forces dynamic init ([case study 5](#case-study-5--stereo-openvins-doesnt-magically-fix-things)). |
 
 LIO has been steadily healthy. VIO is the open problem, but **v4 is
 the first run where mono VIO is within striking distance of useful**.
@@ -943,6 +944,98 @@ The other consistent finding from v4: **the trajectory shape, once
 yaw-aligned, is much better than the raw numbers suggest**. Mono VIO
 on this rig is not broken — it's just missing one observable, and the
 remaining drift is in the realm of what's normal for mono.
+
+## Case study 5 — stereo OpenVINS doesn't magically fix things
+
+Bag `runs/run_20260514T210126Z/`. Same outdoor-circle drive profile as
+v4 (so direct mono-vs-stereo comparison), but with the new
+`rs_front_right` camera enabled and OpenVINS in stereo mode
+(`use_stereo: true`, `max_cameras: 2`).
+
+### Expected: ~91 % error reduction. Actual: slight regression.
+
+```
+APE          v4 mono     v5 stereo    Δ
+─────────  ──────────  ────────────   ───────────
+Raw RMSE    17.80 m     20.76 m       slightly worse
+Aligned-a    4.25 m      9.89 m       2.3× worse
+Aligned-as   1.63 m      2.18 m       slightly worse
+LIO ref      0.11 m      0.20 m       sim itself slower
+```
+
+Two compounding causes:
+
+### Cause 1: bandwidth-limited sim
+
+Adding a second 640×480@30 RGBD sensor through the gz→ROS bridge
+crushed the real-time factor. Topic rates from the v5 bag:
+
+| Topic                    | v4 (mono) | v5 (stereo) | Effect                              |
+|--------------------------|----------:|------------:|-------------------------------------|
+| `/rs_front/image`        | 10.55 Hz  | **6.43 Hz** | 40 % drop — VIO has fewer frames    |
+| `/imu`                   | 86.55 Hz  | **53.02 Hz** | 40 % drop — filter step rate down   |
+| `/Odometry` (LIO)        | 4.85 Hz   | **1.96 Hz**  | 60 % drop — LIO scans slower        |
+| `/ground_truth/pose`     | 51.38 Hz  | **44.19 Hz** | sim clock itself is slower          |
+
+This alone accounts for the LIO regression (0.09 m → 0.13 m) and a
+big chunk of the VIO shape regression. **Stereo VIO with this camera
+load is bandwidth-bound on this hardware.**
+
+Fixes to try (in order):
+- Drop camera resolution back to 320×240 for stereo (4× less per-frame
+  bandwidth). With sub-pixel localisation no longer the bottleneck, this
+  is a fair trade.
+- Drop camera rate from 30 → 15 Hz. Halves CPU/GPU, costs temporal
+  resolution.
+- Drop one of the cameras' depth or points topic — VIO only needs
+  image + camera_info, not depth/points.
+
+### Cause 2: static init still fired (the real surprise)
+
+OpenVINS init log from the v5 run:
+
+```
+[run_subscribe_msckf-12] subscribing to cam (stereo): /rs_front/image
+[run_subscribe_msckf-12] subscribing to cam (stereo): /rs_front_right/image
+[run_subscribe_msckf-12] [init]: successful initialization in 0.0013 seconds
+[run_subscribe_msckf-12] [init]: orientation = -0.0104, 0.0003, -0.9999, 0.0000
+```
+
+Stereo *is* engaged (both cameras subscribed). But OpenVINS' init
+priority is *static first, dynamic only as fallback* — and static init
+**uses only the IMU**. It can determine pitch and roll from gravity,
+but not yaw. With static init firing in 1.3 ms, the yaw was decided
+before either camera contributed anything. Result: same 180° yaw
+flip we saw in v1, v3, v4.
+
+The whole point of going stereo was to fix yaw via parallax. To
+actually realise that benefit, dynamic init has to run instead of
+static. The way to force that: make `init_imu_thresh` so high that
+static init never triggers, then dynamic init (with `init_dyn_use:
+true`, already set) takes over and uses stereo features to bootstrap
+orientation.
+
+**Fix shipped:** `init_imu_thresh: 0.3 → 50.0` in
+`config/openvins/estimator_config.yaml`. With this set, static init
+won't trigger short of literally dropping the rover. Dynamic init
+takes over and stereo's contribution becomes observable.
+
+### What v5 told us, even if the numbers regressed
+
+- **The stereo wiring works.** Both cameras are subscribed, the filter
+  is computing stereo updates. Plumbing-wise, Step 1 is done.
+- **`aligned -as` regressed from 1.63 m to 2.18 m.** This is the
+  "true shape" error after subtracting both yaw and scale, so it's
+  the *honest* trajectory accuracy. It got slightly worse — almost
+  certainly because the sim ran at lower RTF, not because stereo is
+  actually worse than mono. Need v6 with reduced camera load to
+  verify.
+- **The yaw problem isn't a sensor problem, it's a config problem.**
+  Now that we know static init was firing, the `init_imu_thresh: 50`
+  fix should let stereo do its job.
+
+Next bag with these changes should look much more like the expected
+"stereo VIO is 5× better than mono."
 
 ## Case study 3.5 — orientation jitter and the KLT-vs-descriptor question
 
