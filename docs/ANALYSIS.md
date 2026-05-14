@@ -130,8 +130,85 @@ Two reasonable next steps depending on what you want to learn:
 | Want | Do |
 |---|---|
 | A trustworthy real-world trajectory estimator on this rig | LIO is already at 0.5 %. Ship it; treat VIO as a fallback for lidar-degraded scenes (smoke, fog, dust). |
-| To make mono VIO genuinely competitive | Wire up stereo OpenVINS (the second `rs_*` camera is in the SDF; OpenVINS supports it with two config-line changes). Resolves ~91 % of v4 error. |
+| To make mono VIO genuinely competitive | Wire up stereo OpenVINS (a second forward-facing camera in the SDF + two config-line changes). Resolves ~91 % of v4 error. |
 | To compare VIO algorithms head-to-head | Stereo OpenVINS first (so the baseline is fair), then add VINS-Fusion as a `third_party/` submodule with loop closure + optional GPS fusion. Run all three estimators on the same bag and let `analyze_bag.py` compare them. |
+
+### Algorithm-choice cheat sheet — three concrete options
+
+If "switch from OpenVINS" is on the table, here are the three serious
+alternatives ranked by expected impact for *this* rig:
+
+#### Option A — Stereo OpenVINS *first* (recommended next step)
+
+Addresses **~91 %** of the v4 error directly (the yaw + scale parts).
+Same codebase, same launch flow, same analyser. The piece that's
+missing is a *second forward-facing camera in the SDF* — `rs_left` and
+`rs_right` look sideways and don't form a stereo pair with `rs_front`.
+Adding `rs_front_right` (a few cm to the right of `rs_front`, same
+orientation) gives a real stereo baseline.
+
+Workflow: add the camera to `models/explorer_r2/model.sdf`, bridge it
+in `config/bridge.yaml`, add a `cam1:` block to
+`config/openvins/kalibr_imucam_chain.yaml`, flip `use_stereo: true` and
+`max_cameras: 2` in `estimator_config.yaml`. Rebuild colcon, record a
+new bag with the same drive profile as v4.
+
+Expected outcome on a v4-style drive: aligned APE drops from 4.25 m to
+roughly 0.5–1 m, raw APE drops from 17.80 m to 1–3 m — within reach of
+LIO numbers.
+
+#### Option B — VINS-Fusion (the natural OpenVINS competitor)
+
+[HKUST-Aerial-Robotics/VINS-Fusion](https://github.com/HKUST-Aerial-Robotics/VINS-Fusion).
+What you actually get vs OpenVINS:
+
+| Feature                       | OpenVINS (current)          | VINS-Fusion                                                            |
+|-------------------------------|-----------------------------|------------------------------------------------------------------------|
+| Backend                       | MSCKF filter                | Sliding-window bundle adjustment — tighter optimisation, more accurate per-frame |
+| Front-end                     | KLT (default) or ORB        | Always feature-based (good descriptors + RANSAC)                       |
+| Loop closure                  | Topics published, rarely fires | **First-class DBoW2 loop closure** — corrects accumulated drift on return-to-known-place |
+| GPS fusion                    | Not directly                | **Built-in `vins_node` + `global_fusion` that consumes GPS** — could anchor our `/navsat` |
+| Mono yaw observability        | unobservable                | unobservable (same physics)                                            |
+| Maturity                      | very actively maintained    | very actively maintained                                               |
+| Citation count                | high                        | higher                                                                 |
+
+VINS-Fusion's edge over OpenVINS for this rig: **loop closure** and
+**GPS fusion**. Loop closure would visibly snap the trajectory back to
+truth on return-to-start drives. GPS fusion is currently the only thing
+in this list that would *actually* solve the unobservable-yaw problem
+on a single sensor stack (a brief translation under GPS resolves
+heading).
+
+Add as `third_party/VINS-Fusion` submodule + new `vins.launch.py` + one
+line in `analyze_bag.py`'s `ODOM_TOPICS`. Architecture already supports
+this — same pattern we used for FAST_LIO.
+
+#### Option C — Kimera-VIO (skip unless you need full SLAM)
+
+[MIT-SPARK/Kimera-VIO](https://github.com/MIT-SPARK/Kimera-VIO).
+Heavier; also supports RGBD which would directly use our
+`/rs_front/depth`. Comparable to VINS-Fusion for trajectory accuracy,
+but bigger memory footprint and more setup work. Worth picking up only
+if you want the full Kimera SLAM stack (semantic mapping, mesh
+reconstruction, etc.) on top of VIO.
+
+### Recommended order of operations
+
+Don't try to compare alternatives until you have a fair baseline:
+
+1. **Step 1 — Stereo OpenVINS** (option A above). Sets the "real"
+   mono-vs-stereo numbers for this rig. *Without this, comparing
+   any other VIO is meaningless — you'd be comparing two crippled
+   mono setups.*
+2. **Step 2 — Add VINS-Fusion alongside** (option B). Run all three
+   estimators (OpenVINS-stereo, VINS-Fusion-stereo, FAST_LIO) on the
+   same bag. `analyze_bag.py` is topic-agnostic; one line to add the
+   VINS topic.
+3. **Step 3 — Optionally try Kimera-VIO** if Steps 1–2 leave you
+   wanting semantic mapping or mesh reconstruction.
+
+Steps 1 and 2 are independent of each other in scope; either can be
+done first if Step 1 has been completed.
 
 ### What changed since defaults — currently shipping
 
