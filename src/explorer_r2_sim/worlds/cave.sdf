@@ -1,21 +1,14 @@
 <?xml version="1.0" ?>
 <!--
-  EXPLORER_R2 (CMU Team Explorer SubT challenge rover) in a SubT cave.
+  SubT cave environment. Pure environment SDF — no robot.
 
-  Vehicle is INCLUDED from models/explorer_r2/model.sdf — that is a local copy
-  of OpenRobotics' EXPLORER_R2_SENSOR_CONFIG_2 with two sensors added
-  (magnetometer + NavSat) and the model name normalised. We include rather
-  than re-implement so the full r2.dae mesh loads (no submesh slicing → no
-  "cropped front" effect from the inlined version), and so we get the
-  original sensor stack:
-    - 1× IMU @ 250 Hz (with realistic bias model — good for VIO)
-    - 1× front gpu_lidar
-    - 4× RealSense rgbd_camera (front, back, left, right) — stereo coverage
-  Plus our additions:
-    - magnetometer
-    - NavSat / GPS
+  The EXPLORER_R2 model (with DiffDrive + PosePublisher plugins and all
+  sensors: IMU, gpu_lidar, 4× RGBD, magnetometer, NavSat) is spawned at
+  launch time by cave.launch.py via `ros_gz_sim create`. Spawn pose for
+  this preset is in SPAWN_POSES["cave"] in cave.launch.py.
 
-  DiffDrive + PosePublisher plugins are attached via the <include> block.
+  This SDF is therefore reusable with any robot model — only the launch
+  file knows what to spawn.
 -->
 <sdf version="1.9">
   <world name="cave">
@@ -124,49 +117,9 @@
       <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Cave Cap Type B</uri>
     </include>
 
-    <!-- ─────────────────────────── EXPLORER_R2 ─────────────────────────────
-         Local model = original Fuel mesh + magnetometer + NavSat additions.
-         GZ_SIM_RESOURCE_PATH must contain the package's models/ dir for the
-         model:// URI to resolve (set by launch file). -->
-    <include>
-      <name>explorer_r2</name>
-      <!-- Z=0.4: <include><pose> overrides the model's internal 0.398
-           offset, so without lifting it the wheels sink into the ground. -->
-      <pose>2 0 0.4 0 0 0</pose>
-      <uri>model://explorer_r2</uri>
-
-      <!-- 4-wheel skid-steer driven by /cmd_vel. Joint names match the
-           original model. Odom @ 50 Hz on /model/explorer_r2/odometry. -->
-      <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
-        <left_joint>left_rear_wheel</left_joint>
-        <left_joint>left_front_wheel</left_joint>
-        <right_joint>right_rear_wheel</right_joint>
-        <right_joint>right_front_wheel</right_joint>
-        <wheel_separation>1.25</wheel_separation>
-        <wheel_radius>0.31</wheel_radius>
-        <odom_publish_frequency>50</odom_publish_frequency>
-        <topic>cmd_vel</topic>
-        <frame_id>explorer_r2/odom</frame_id>
-        <child_frame_id>explorer_r2/base_link</child_frame_id>
-      </plugin>
-
-      <!-- TF + per-link/sensor poses → /model/explorer_r2/pose,
-           /model/explorer_r2/tf  (the latter as gz.msgs.Pose_V → tf2). -->
-      <plugin filename="gz-sim-pose-publisher-system" name="gz::sim::systems::PosePublisher">
-        <!-- publish_link_pose=false avoids the explorer_r2→base_link
-             transform that conflicts with DiffDrive's odom→base_link
-             (one frame can't have two parents in tf2). publish_sensor_pose
-             still emits base_link→sensor transforms which is what RViz
-             needs to render lidar/camera. -->
-        <publish_link_pose>false</publish_link_pose>
-        <publish_sensor_pose>true</publish_sensor_pose>
-        <publish_collision_pose>false</publish_collision_pose>
-        <publish_visual_pose>false</publish_visual_pose>
-        <publish_nested_model_pose>false</publish_nested_model_pose>
-        <use_pose_vector_msg>true</use_pose_vector_msg>
-        <update_frequency>50</update_frequency>
-      </plugin>
-    </include>
+    <!-- The robot is no longer included here — cave.launch.py spawns it
+         dynamically via `ros_gz_sim create` with the spawn pose from
+         SPAWN_POSES["cave"]. This world is now a pure environment SDF. -->
 
   </world>
 </sdf>

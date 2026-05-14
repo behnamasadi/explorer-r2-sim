@@ -1,8 +1,13 @@
 # Brings up the full sim in one shot:
-#   gz sim  ─►  <world>.sdf  (EXPLORER_R2 in a SubT environment)
-#   parameter_bridge  ─►  config/bridge.yaml
-#   RViz2  ─►  rviz/sim.rviz       (unified layout: sim + VIO + LIO + GNSS)
+#   gz sim         ─►  <world>.sdf            (environment only — no robot)
+#   ros_gz_sim     ─►  spawn EXPLORER_R2 at SPAWN_POSES[<world>] (or args)
+#   parameter_bridge ─►  config/bridge.yaml
+#   RViz2          ─►  rviz/sim.rviz          (unified layout: sim + VIO + LIO + GNSS)
 #   teleop_twist_keyboard  (optional, opens in its own xterm)
+#
+# The robot and the environment are fully decoupled — every world SDF
+# (local presets and third-party Fuel worlds alike) is a pure environment,
+# and the rover is dynamically spawned by `ros_gz_sim create` after gz is up.
 #
 # Launch arguments:
 #   gui:=true|false        run Gazebo with GUI (default true)
@@ -11,6 +16,11 @@
 #   world:=<preset|path|fuel-url>
 #                          tunnel | cave (preset short names), or a local
 #                          SDF path, or a Fuel world URL. Default: tunnel.
+#   spawn_x / spawn_y / spawn_z / spawn_yaw
+#                          robot spawn pose. Default: SPAWN_POSES[<world>],
+#                          falling back to (0, 0, 0.4, 0) for unknown worlds.
+#   spawn_robot:=true|false  whether to spawn EXPLORER_R2 at all (default true).
+#                          set false to load the world only.
 #   verbose:=true|false    Gazebo verbose flag (-v 4)
 
 import os
@@ -47,6 +57,19 @@ WORLD_PRESETS: "dict[str, str]" = {
     "tugbot_depot":    "https://app.gazebosim.org/Aiosama/fuel/worlds/tugbot_depot%201",
     "singapore_river": "https://app.gazebosim.org/monkescripts/fuel/worlds/Singapore%20River%20Robot%20X%202026%20world",
 }
+
+# Default robot spawn pose per preset: (x, y, z, yaw). Z=0.4 keeps the
+# rover's wheels just above the ground for these worlds. Override per
+# launch with `spawn_x:=… spawn_y:=… spawn_z:=… spawn_yaw:=…`.
+# Unknown / arbitrary worlds get the fallback below.
+SPAWN_POSES: "dict[str, tuple[float, float, float, float]]" = {
+    "tunnel":          (10.0, 0.0, 0.4, 0.0),
+    "cave":            ( 2.0, 0.0, 0.4, 0.0),
+    "rubicon":         ( 0.0, 0.0, 0.5, 0.0),
+    "tugbot_depot":    ( 0.0, 0.0, 0.5, 0.0),
+    "singapore_river": ( 0.0, 0.0, 0.5, 0.0),
+}
+SPAWN_FALLBACK = (0.0, 0.0, 0.4, 0.0)
 
 # https://app.gazebosim.org/{user}/fuel/worlds/{name}
 #   → https://fuel.gazebosim.org/1.0/{user}/worlds/{name}
@@ -99,10 +122,25 @@ def generate_launch_description():
     # When gui:=false, pass -s to run Gazebo server-only (no rendering UI).
     server_only = PythonExpression(["'' if '", gui, "' == 'true' else ' -s'"])
 
-    def _make_gz_launch(context, *_args, **_kwargs):
-        world_resolved = resolve_world(
-            LaunchConfiguration("world").perform(context), pkg_share)
-        return [IncludeLaunchDescription(
+    model_sdf = os.path.join(pkg_share, "models", "explorer_r2", "model.sdf")
+
+    def _resolve_pose_component(context, arg_name, default_value):
+        # Each spawn_{x,y,z,yaw} arg defaults to "auto" — that sentinel
+        # means "use SPAWN_POSES[world][idx]". Any other value passes through.
+        v = LaunchConfiguration(arg_name).perform(context)
+        return v if v != "auto" else str(default_value)
+
+    def _setup_world_and_spawn(context, *_args, **_kwargs):
+        world_arg = LaunchConfiguration("world").perform(context)
+        world_resolved = resolve_world(world_arg, pkg_share)
+        defaults = SPAWN_POSES.get(world_arg, SPAWN_FALLBACK)
+
+        sx = _resolve_pose_component(context, "spawn_x",   defaults[0])
+        sy = _resolve_pose_component(context, "spawn_y",   defaults[1])
+        sz = _resolve_pose_component(context, "spawn_z",   defaults[2])
+        sy_yaw = _resolve_pose_component(context, "spawn_yaw", defaults[3])
+
+        gz_sim = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 PathJoinSubstitution([
                     FindPackageShare("ros_gz_sim"), "launch", "gz_sim.launch.py"
@@ -113,9 +151,26 @@ def generate_launch_description():
                 "gz_args": [world_resolved, " -r", server_only, " -v ", verbose],
                 "on_exit_shutdown": "true",
             }.items(),
-        )]
+        )
 
-    gz_sim_launch = OpaqueFunction(function=_make_gz_launch)
+        # ros_gz_sim create polls the spawn service until gz is ready,
+        # so race-free even though it's launched in parallel with gz_sim.
+        spawn_robot = Node(
+            package="ros_gz_sim",
+            executable="create",
+            name="spawn_explorer_r2",
+            arguments=[
+                "-name", "explorer_r2",
+                "-file", model_sdf,
+                "-x", sx, "-y", sy, "-z", sz, "-Y", sy_yaw,
+            ],
+            output="screen",
+            condition=IfCondition(LaunchConfiguration("spawn_robot")),
+        )
+
+        return [gz_sim, spawn_robot]
+
+    gz_sim_launch = OpaqueFunction(function=_setup_world_and_spawn)
 
     parameter_bridge = Node(
         package="ros_gz_bridge",
@@ -192,6 +247,16 @@ def generate_launch_description():
             description=("World to load. Preset short names: "
                          + ", ".join(WORLD_PRESETS.keys())
                          + ". Or pass a local .sdf path or a Fuel world URL.")),
+        DeclareLaunchArgument("spawn_robot", default_value="true",
+                              description="Spawn EXPLORER_R2 into the world after gz is up"),
+        DeclareLaunchArgument("spawn_x",   default_value="auto",
+                              description="Robot spawn X (m). 'auto' = SPAWN_POSES[<world>][0]"),
+        DeclareLaunchArgument("spawn_y",   default_value="auto",
+                              description="Robot spawn Y (m). 'auto' = SPAWN_POSES[<world>][1]"),
+        DeclareLaunchArgument("spawn_z",   default_value="auto",
+                              description="Robot spawn Z (m). 'auto' = SPAWN_POSES[<world>][2]"),
+        DeclareLaunchArgument("spawn_yaw", default_value="auto",
+                              description="Robot spawn yaw (rad). 'auto' = SPAWN_POSES[<world>][3]"),
         DeclareLaunchArgument("verbose", default_value="3"),
 
         # Make the Fuel + workspace model paths discoverable.

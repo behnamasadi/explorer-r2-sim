@@ -939,5 +939,44 @@
                 <use_parent_model_frame>0</use_parent_model_frame>
             </axis>
         </joint>
+
+        <!-- ─── Drive + odom + TF plugins ──────────────────────────────────
+             These used to live in tunnel.sdf and cave.sdf at the world-include
+             site. Moving them onto the model itself means the rover is
+             self-contained and can be spawned into any world via
+             `ros_gz_sim create` without the world SDF knowing anything about
+             the robot. -->
+
+        <!-- 4-wheel skid-steer driven by /cmd_vel. Joint names match the
+             original Fuel model. Odom @ 50 Hz on /model/explorer_r2/odometry. -->
+        <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+            <left_joint>left_rear_wheel</left_joint>
+            <left_joint>left_front_wheel</left_joint>
+            <right_joint>right_rear_wheel</right_joint>
+            <right_joint>right_front_wheel</right_joint>
+            <wheel_separation>1.25</wheel_separation>
+            <wheel_radius>0.31</wheel_radius>
+            <odom_publish_frequency>50</odom_publish_frequency>
+            <topic>cmd_vel</topic>
+            <frame_id>explorer_r2/odom</frame_id>
+            <child_frame_id>explorer_r2/base_link</child_frame_id>
+        </plugin>
+
+        <!-- TF + per-link/sensor poses → /model/explorer_r2/pose,
+             /model/explorer_r2/tf  (the latter as gz.msgs.Pose_V → tf2).
+             publish_link_pose=false avoids the explorer_r2→base_link
+             transform that conflicts with DiffDrive's odom→base_link
+             (one frame can't have two parents in tf2). publish_sensor_pose
+             still emits base_link→sensor transforms which is what RViz
+             needs to render lidar/camera. -->
+        <plugin filename="gz-sim-pose-publisher-system" name="gz::sim::systems::PosePublisher">
+            <publish_link_pose>false</publish_link_pose>
+            <publish_sensor_pose>true</publish_sensor_pose>
+            <publish_collision_pose>false</publish_collision_pose>
+            <publish_visual_pose>false</publish_visual_pose>
+            <publish_nested_model_pose>false</publish_nested_model_pose>
+            <use_pose_vector_msg>true</use_pose_vector_msg>
+            <update_frequency>50</update_frequency>
+        </plugin>
     </model>
 </sdf>

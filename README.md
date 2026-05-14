@@ -227,60 +227,49 @@ BUILD=force docker compose up
 
 ### Worlds
 
-The `world:=` launch argument accepts a **preset short name**, a **local
-`.sdf` path**, or a **Gazebo Fuel URL**. The presets are defined in
-`WORLD_PRESETS` at the top of `launch/cave.launch.py`:
+**The robot and the environment are fully decoupled.** Every world SDF —
+both the local presets and any third-party Fuel world — is a pure
+environment. `cave.launch.py` always spawns the EXPLORER_R2 dynamically
+via `ros_gz_sim create` after gz is up; the spawn pose comes from
+`SPAWN_POSES[<preset>]` (in `launch/cave.launch.py`), and you can
+override any component via `spawn_x` / `spawn_y` / `spawn_z` / `spawn_yaw`.
 
-| Preset             | Source                                                                | Robot included? | Notes |
-|--------------------|-----------------------------------------------------------------------|-----------------|-------|
-| `tunnel` (default) | `worlds/tunnel.sdf`                                                   | Yes             | 119-tile SubT tunnel network, hand-assembled from OpenRobotics Fuel tiles. |
-| `cave`             | `worlds/cave.sdf`                                                     | Yes             | Smaller open SubT cave, hand-assembled. Lighter on the GPU. |
-| `rubicon`          | [`abdsemiz/Rubicon World`](https://app.gazebosim.org/abdsemiz/fuel/worlds/Rubicon%20World) | No              | Third-party Fuel world. Spawn the robot separately (see below). |
-| `tugbot_depot`     | [`Aiosama/tugbot_depot 1`](https://app.gazebosim.org/Aiosama/fuel/worlds/tugbot_depot%201) | No              | Same — third-party Fuel world. |
-| `singapore_river`  | [`monkescripts/Singapore River Robot X 2026`](https://app.gazebosim.org/monkescripts/fuel/worlds/Singapore%20River%20Robot%20X%202026%20world) | No              | Same. |
+The `world:=` argument accepts a **preset short name**, a **local
+`.sdf` path**, or a **Gazebo Fuel URL**. Presets:
 
-The `tunnel` and `cave` SDFs are originals in this repo — they wrap the
-upstream Fuel tile assets and `<include>` the EXPLORER_R2 model inline,
-which is why the robot spawns automatically. The third-party Fuel worlds
-are loaded as-is; the EXPLORER_R2 model has to be spawned into them after
-the world is up.
+| Preset             | Source                                                                                                   | Default spawn pose `(x, y, z, yaw)` |
+|--------------------|----------------------------------------------------------------------------------------------------------|--------------------------------------|
+| `tunnel` (default) | `worlds/tunnel.sdf` — 119-tile SubT tunnel network, hand-assembled from OpenRobotics Fuel tiles          | `(10.0, 0.0, 0.4, 0.0)`              |
+| `cave`             | `worlds/cave.sdf` — smaller open SubT cave. Lighter on the GPU                                            | `( 2.0, 0.0, 0.4, 0.0)`              |
+| `rubicon`          | [`abdsemiz/Rubicon World`](https://app.gazebosim.org/abdsemiz/fuel/worlds/Rubicon%20World)                | `( 0.0, 0.0, 0.5, 0.0)`              |
+| `tugbot_depot`     | [`Aiosama/tugbot_depot 1`](https://app.gazebosim.org/Aiosama/fuel/worlds/tugbot_depot%201)                | `( 0.0, 0.0, 0.5, 0.0)`              |
+| `singapore_river`  | [`monkescripts/Singapore River Robot X 2026`](https://app.gazebosim.org/monkescripts/fuel/worlds/Singapore%20River%20Robot%20X%202026%20world) | `( 0.0, 0.0, 0.5, 0.0)`              |
 
-Pick a preset:
+Anything outside the table (a custom local SDF, an arbitrary Fuel URL)
+falls back to `(0.0, 0.0, 0.4, 0.0)`. Override with `spawn_x:=… spawn_y:=…
+spawn_z:=… spawn_yaw:=…`.
+
 ```bash
-# Launch the cave preset:
+# Default — tunnel preset, robot at (10, 0, 0.4):
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py
+
+# Different world, default spawn for that world:
 docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py world:=cave
 
-# Launch a third-party Fuel world (robot spawn deferred — see below):
-docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py world:=rubicon
-```
+# Third-party Fuel world — robot is spawned automatically at the
+# fallback pose unless you supply spawn coordinates:
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
+  world:=rubicon spawn_x:=3.0 spawn_y:=1.5 spawn_z:=0.6
 
-Or pass a path / Fuel URL directly:
-```bash
-# Local SDF in the install share:
-ros2 launch explorer_r2_sim cave.launch.py \
-  world:=/ws/install/explorer_r2_sim/share/explorer_r2_sim/worlds/cave.sdf
-
-# Any Gazebo Fuel world URL (the app.gazebosim.org → fuel.gazebosim.org/1.0
-# rewrite is handled by the launch):
-ros2 launch explorer_r2_sim cave.launch.py \
+# Any Fuel URL works the same way (app.gazebosim.org → fuel API rewrite
+# is handled by the launch):
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
   world:=https://app.gazebosim.org/OpenRobotics/fuel/worlds/Empty
 ```
 
-#### Spawning the rover into a third-party Fuel world
-
-For `rubicon`, `tugbot_depot`, `singapore_river`, or any external SDF that
-doesn't `<include>` the EXPLORER_R2 model, spawn the rover after the
-world is up:
-
-```bash
-docker compose exec sim ros2 run ros_gz_sim create \
-  -name explorer_r2 \
-  -file /ws/install/explorer_r2_sim/share/explorer_r2_sim/models/explorer_r2/model.sdf \
-  -x 0 -y 0 -z 0.4
-```
-
-Tune `-x -y -z` to a free spot in the new world (raycast into a wall and
-the rover never gets up).
+Set `spawn_robot:=false` to load the world without any robot at all
+(useful when you want to inspect a world or spawn a different robot
+from another launch).
 
 ### How to drive the robot
 
