@@ -25,9 +25,11 @@ This doc has three parts:
 | `run_20260514T182108Z` (v3)     | 51.28 m | **0.16 m (0.3 %)** | **1.01** | 139.75 m (272 %) | **5.40** | Tracker reverted to defaults + camera bumped to 640×480. **70× better than v2**, slightly better than v1. Z-axis drift visible — still a parallax/scene-texture problem ([case study 3](#case-study-3--640480-revert-mono-vio-back-to-baseline)). |
 | `run_20260514T184552Z` (v4)     | 17.89 m | **0.09 m (0.5 %)** | **1.00** | 20.22 m (113 %) | **1.62** | **Circle outside the tunnel, no lattice texture.** VIO ratio 5.40 → 1.62. Remaining 113 % end-pos error is almost entirely the unobservable initial yaw — Umeyama-aligned APE would be tiny ([case study 4](#case-study-4--out-of-the-tunnel-circle-mono-vio-finally-works)). |
 | `run_20260514T210126Z` (v5)     | 23.17 m | 0.13 m (0.6 %)     | 1.01     | 33.61 m (145 %) | 3.59     | **Stereo OpenVINS** (added rs_front_right camera, use_stereo:true). Surprise: *worse* than v4 mono. Two confounders — sim RTF dropped (bandwidth saturated by 2× 640×480@30) so every estimator got less data, AND static init fired again in 1.3 ms and converged to 180° yaw. Stereo never got a chance to fix yaw. Fix shipped: `init_imu_thresh: 50.0` forces dynamic init ([case study 5](#case-study-5--stereo-openvins-doesnt-magically-fix-things)). |
+| `run_20260514T212506Z` (v6)     | 35.80 m | **0.09 m (0.3 %)** | **1.00** | 7.50 m (21 %)  | **1.17** | **Stereo + dynamic init: the big win.** Aligned APE 0.48 m, aligned+scale 0.47 m → 9× better than v4 mono, 20× better than v5 stereo-static-init. Scale ratio 1.17 (was 3.59) — stereo basically eliminated scale drift. ZUPT now firing consistently with 168 stereo features. Mono-VIO era is over for this codebase ([case study 6](#case-study-6--stereo-dynamic-init-is-actually-the-answer)). |
 
-LIO has been steadily healthy. VIO is the open problem, but **v4 is
-the first run where mono VIO is within striking distance of useful**.
+LIO is rock solid. **VIO is now usable** as of v6 — stereo + dynamic
+init together resolve the unobservable-yaw + scale-drift failure
+modes that dominated v1–v5.
 
 ### Why VIO trajectories look so bad — the headline conclusion
 
@@ -1036,6 +1038,91 @@ takes over and stereo's contribution becomes observable.
 
 Next bag with these changes should look much more like the expected
 "stereo VIO is 5× better than mono."
+
+## Case study 6 — stereo + dynamic init is actually the answer
+
+Bag `runs/run_20260514T212506Z/`. Same outdoor-circle drive as v4/v5
+but with the v5 case-study fix shipped: `init_imu_thresh: 0.3 → 50.0`
+(forces dynamic init by making the static-init variance threshold
+unreachable in normal operation).
+
+### Numbers — first time mono-to-stereo gave the promised win
+
+```
+APE              v4 mono   v5 stereo-static   v6 stereo-dynamic
+─────────────  ──────────  ────────────────   ──────────────────
+Raw RMSE        17.80 m         20.76 m            21.62 m
+Aligned (-a)     4.25 m          9.89 m             0.48 m   ← 9× better than v4
+Aligned-scale    1.63 m          2.18 m             0.47 m   ← 3.5× better than v4
+Path ratio        1.62             3.59              1.17    ← basically GT
+End-pos error    20.22 m         33.61 m             7.50 m
+LIO ref RMSE     0.09 m           0.13 m             0.09 m   ← sim back to normal
+```
+
+**Aligned APE of 0.48 m on a 35.80 m drive is 1.3 %** — the same
+ballpark as published stereo-VIO benchmarks. The fact that `-a` and
+`-as` numbers are nearly identical (0.48 vs 0.47) is the smoking gun
+that **scale is now observed correctly** by stereo. The remaining
+7.50 m raw end-position error is almost entirely a constant yaw
+offset between OpenVINS' `global` frame and gz world — exactly the
+kind of residual we expected to be left with.
+
+### ZUPT is now firing — second big improvement
+
+The init log for v6 is full of:
+
+```
+[ZUPT]: passed disparity (0.027 < 0.500, 168 features)
+[ZUPT]: passed disparity (0.028 < 0.500, 168 features)
+[ZUPT]: passed disparity (0.027 < 0.500, 168 features)
+...
+```
+
+Hundreds of these lines during stationary periods of the drive. ZUPT
+is detecting stationary state from **168 stereo features** of disparity
+evidence per frame, well below the `zupt_max_disparity: 0.5` threshold.
+Compare to v1-v4 (mono) where ZUPT was *enabled* but rarely fired
+because the mono front-end didn't produce enough disparity evidence to
+satisfy the gate. **Stereo gives ZUPT the data it needs to actually
+work** — this fixes the "trajectory grows while stationary" problem
+that dominated case studies 1, 2, and 3.
+
+### Bandwidth status
+
+```
+Topic             Target    v5         v6        % of target
+/rs_front/image   30 Hz     6.43 Hz    8.04 Hz   ~27 %
+/imu              250 Hz   53 Hz      66 Hz      ~27 %
+/Odometry (LIO)   ~15 Hz    1.96 Hz    3.39 Hz   ~23 %
+/ground_truth/pose 60 Hz   44 Hz      51 Hz      ~85 %
+```
+
+The sim is running at roughly **27 % real-time** with the stereo
+camera load. That's a steep cost for stereo, but v6 shows it's worth
+paying. Future optimisations if RTF becomes a problem (none of these
+are needed right now):
+
+- Drop both stereo cameras back to 320×240 (4× less per-frame
+  bandwidth, marginal accuracy loss given v6 is already at 1.3 % aligned drift).
+- Drop SDF `<update_rate>` from 30 → 15 Hz on both cameras.
+- Strip the depth + points bridge entries for rs_front and rs_front_right
+  (VIO only consumes `/image` + `/camera_info`).
+- Disable `rs_left`, `rs_right`, `rs_back` entirely (or just don't bridge them).
+
+### What v6 means for the project
+
+- Mono VIO is over for this codebase. Stereo is the production VIO
+  configuration. Mono can be re-enabled by flipping `use_stereo:
+  false`, `max_cameras: 1`, `init_imu_thresh: 0.3` — but there's no
+  reason to.
+- The remaining 7.50 m raw end-error is the unobservable initial yaw
+  in OpenVINS' world frame. Resolving it cleanly would need either
+  magnetometer fusion or a known-heading prior. Until then, RViz
+  visual trails will look "rotated" relative to GT, but `evo_ape -a`
+  numbers are honest.
+- Step 2 (VINS-Fusion) and Step 3 (Kimera-VIO) now have a real
+  baseline to beat: aligned APE of 0.48 m on a 35.80 m drive in this
+  scene.
 
 ## Case study 3.5 — orientation jitter and the KLT-vs-descriptor question
 
