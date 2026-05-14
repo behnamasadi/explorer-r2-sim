@@ -278,6 +278,36 @@ on the first sample). VIO and LIO then drift *relative to this static
 link* over time — that drift is exactly what the visual gap between
 the colored trails and the yellow GT trail shows.
 
+#### Why each estimator has two RViz displays — Odometry vs Path
+
+Every estimator (wheel-odom, VIO, LIO, GT) shows up as **two**
+displays in the layout — for example, "LIO Odom" + "LIO Path". They're
+two different ROS message types showing two different things:
+
+| ROS message              | RViz display name | What it is                                                                                                              |
+|--------------------------|-------------------|-------------------------------------------------------------------------------------------------------------------------|
+| **`nav_msgs/Odometry`**  | `… Odom`          | One message = **one current pose** (+ velocity + covariance), published every step. With `Keep: 200` set in the display, RViz draws the last 200 arrows as a breadcrumb trail. |
+| **`nav_msgs/Path`**      | `… Path`          | One message = **the entire trajectory** as a list of poses. The estimator appends each new pose and republishes the whole array. RViz draws it as a continuous line. |
+
+Trade-offs:
+
+- **Path** is one growing message (the latest one contains all history); **Odometry** is many tiny ones at high rate.
+- **Odometry** carries velocity (twist) and covariance; **Path** is positions only.
+- For recording to rosbag and offline analysis with `evo`, use **Path** — one message holds the whole trajectory snapshot. `scripts/eval.sh` reads the Path topics, not the Odometry topics.
+
+Same naming convention across all four trajectory sources in the layout:
+
+| Source        | Odometry topic            | Path topic            |
+|---------------|---------------------------|------------------------|
+| Wheel odom    | `/model/explorer_r2/odometry` | *(none — DiffDrive only publishes Odometry)* |
+| OpenVINS (VIO)| `/ov_msckf/odomimu`       | `/ov_msckf/pathimu`    |
+| FAST_LIO (LIO)| `/Odometry`               | `/path`                |
+| Ground truth  | `/ground_truth/odom`      | `/ground_truth/path`   |
+
+So in RViz: the **arrows** you see (red 🔴 / green 🟢 / blue 🔵 / yellow 🟡)
+come from the Odometry topics; the **connected lines** between them come
+from the Path topics. Same color for both, since the displays are paired.
+
 ### Common Mode 1 overrides
 
 ```bash
