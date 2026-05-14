@@ -222,13 +222,40 @@ docker compose build sim
 docker compose up
 ```
 
-To opt out of one or both estimators (lighter resource usage):
+### What runs and what you see
+
+| Component                | Topic(s) produced                                       | RViz display    | When it appears                                          |
+|--------------------------|---------------------------------------------------------|-----------------|----------------------------------------------------------|
+| **gz sim**               | sensor topics: `/imu`, `/lidar/points`, `/rs_front/*`, `/navsat`, … | Lidar Cloud, RS Front Camera/Cloud, TF | Immediately when gz finishes loading the world.          |
+| **DiffDrive plugin**     | `/model/explorer_r2/odometry`                            | **Wheel Odom** (red arrow) | As soon as the robot moves (wheels turn).                 |
+| **OpenVINS (VIO)**       | `/ov_msckf/odomimu`, `/ov_msckf/pathimu`, `/ov_msckf/points_msckf`, … | **VIO Odom** (green arrow) + **VIO Path** (green line) + feature cloud | After **~3-5 s of camera motion** — VIO needs parallax to initialise. A stationary robot will publish nothing. |
+| **FAST_LIO (LIO)**       | `/Odometry`, `/path`, `/cloud_registered`                | **LIO Odom** (blue arrow) + **LIO Path** (blue line) + accumulated map cloud | After **~1-2 s of lidar frames** (LIO converges on the first few scans).  |
+| **Ground truth** (gz)    | `/ground_truth/pose` (TFMessage)                         | TF display, frame `explorer_r2` | Immediately.                                              |
+
+The three trails (red wheel-odom, green VIO, blue LIO) share `rviz/sim.rviz`
+and overlay on the same orbit view. **Drive the robot** (joystick or
+keyboard — see [How to drive the robot](#how-to-drive-the-robot)); without
+motion the estimator displays stay empty.
+
+### Opting out of VIO / LIO
+
 ```bash
+# Sim only — lightest, no estimators:
 docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
-  vio:=false lio:=false           # sim only
+  vio:=false lio:=false
+
+# Sim + VIO only (skip LIO):
 docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
-  vio:=true lio:=false            # sim + VIO only
+  lio:=false
+
+# Sim + LIO only (skip VIO):
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
+  vio:=false
 ```
+
+If you launched with an estimator off and want to attach it later without
+restarting gz, see [Run VIO](#run-vio--attach-openvins-to-a-running-sim)
+or [Run LIO](#run-lio--attach-fast_lio-to-a-running-sim).
 
 The host's `~/ros2_ws` is bind-mounted into the container at `/ws`. Source
 edits show up live; `build/`, `install/`, `log/` end up on the host
