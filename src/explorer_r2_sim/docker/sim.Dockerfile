@@ -47,6 +47,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV ROS_DISTRO=${ROS_DISTRO}
 WORKDIR /ws
 
+# Source ROS (and the workspace overlay if it exists) in /root/.bashrc so
+# `docker compose exec sim bash` drops you into a shell with `ros2` and
+# the explorer_r2_sim package already on the path. The entrypoint also
+# sources these for the CMD process, but compose exec bypasses the
+# entrypoint — without this, exec'd commands hit "ros2: not found".
+RUN printf '%s\n' \
+      'source /opt/ros/${ROS_DISTRO}/setup.bash' \
+      '[ -f /ws/install/setup.bash ] && source /ws/install/setup.bash' \
+      >> /root/.bashrc
+
 COPY docker/sim-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

@@ -198,9 +198,14 @@ without restarting it.
 > `ros-jazzy-robot-localization` and wire `navsat_transform_node` +
 > `ekf_node` (see the `robot_localization` docs).
 
-There is **one** RViz layout (`rviz/sim.rviz`), opened by the sim in mode 1.
-It already has displays for the VIO and LIO topics, sitting empty; when you
-launch mode 2 or 3, those displays light up. Modes 2 and 3 can run together.
+**One RViz layout for everything.** `rviz/sim.rviz` opens with the sim in
+Mode 1 and already has displays subscribed to the VIO and LIO topics —
+but those displays stay empty in Mode 1 because no estimator is running.
+Mode 2 and Mode 3 don't open a second RViz; they just start their
+respective nodes, and the existing layout's displays light up as the
+topics start publishing. The three modes are additive: you can run Mode
+1 + 2 + 3 together and see wheel-odom (red), VIO (green), and LIO (blue)
+trails overlaid on the same view.
 
 ## Quickstart — Mode 1: sim only
 
@@ -331,6 +336,14 @@ to the `/ov_msckf/*` topics that the sim's RViz layout already has
 displays for, so **don't open a second RViz** — the existing one will
 populate as soon as the VIO node starts.
 
+> **Why `bash -ic`?** `docker compose exec` bypasses the container's
+> entrypoint, so it doesn't inherit the sourced ROS environment. The
+> image's `/root/.bashrc` does source ROS + the workspace overlay, but
+> bash only reads `.bashrc` for interactive shells — hence `bash -ic`
+> (interactive, command). Equivalent: drop into `docker compose exec
+> sim bash` and run commands there, since the interactive shell
+> auto-sources.
+
 `compose exec` needs the `sim` container to already be running, so this
 is a two-terminal recipe (both terminals `cd` into the compose dir):
 
@@ -341,14 +354,14 @@ docker compose up
 
 # Terminal 2 — attach OpenVINS to the running sim:
 cd ~/ros2_ws/src/explorer_r2_sim
-docker compose exec sim ros2 launch explorer_r2_sim vio.launch.py
+docker compose exec sim bash -ic "ros2 launch explorer_r2_sim vio.launch.py"
 ```
 
 Prefer a single terminal? Use detached mode:
 ```bash
 cd ~/ros2_ws/src/explorer_r2_sim
 docker compose up -d
-docker compose exec sim ros2 launch explorer_r2_sim vio.launch.py
+docker compose exec sim bash -ic "ros2 launch explorer_r2_sim vio.launch.py"
 docker compose logs -f sim    # tail sim logs in this terminal
 ```
 
@@ -366,7 +379,7 @@ already has displays for those topics, so no second RViz is needed.
 
 # Terminal 2 — attach FAST_LIO to the running sim:
 cd ~/ros2_ws/src/explorer_r2_sim
-docker compose exec sim ros2 launch explorer_r2_sim lio.launch.py
+docker compose exec sim bash -ic "ros2 launch explorer_r2_sim lio.launch.py"
 ```
 
 Mode 2 and Mode 3 can run together — open a third terminal and launch the
@@ -431,18 +444,18 @@ Three-terminal workflow:
 docker compose up
 
 # Terminal 2 — VIO + LIO + ground-truth-path publisher:
-docker compose exec sim ros2 launch explorer_r2_sim vio.launch.py &
-docker compose exec sim ros2 launch explorer_r2_sim lio.launch.py &
-docker compose exec sim ros2 run explorer_r2_sim gt_to_path.py
+docker compose exec sim bash -ic "ros2 launch explorer_r2_sim vio.launch.py" &
+docker compose exec sim bash -ic "ros2 launch explorer_r2_sim lio.launch.py" &
+docker compose exec sim bash -ic "ros2 run explorer_r2_sim gt_to_path.py"
 
 # Terminal 3 — drive a scenario + record:
-docker compose exec sim ros2 run explorer_r2_sim record_run.sh slow_loop
+docker compose exec sim bash -ic "ros2 run explorer_r2_sim record_run.sh slow_loop"
 # Drive the joystick / keyboard to execute the slow_loop profile.
 # Ctrl-C when done.
 
 # Then evaluate:
-docker compose exec sim ros2 run explorer_r2_sim eval.sh \
-  ~/.local/share/evo/slow_loop/<UTC>
+docker compose exec sim bash -ic \
+  "ros2 run explorer_r2_sim eval.sh ~/.local/share/evo/slow_loop/<UTC>"
 ```
 
 `scenarios/README.md` documents five canonical drive profiles (`static`,
