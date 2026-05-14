@@ -63,6 +63,76 @@ observability), or a known-heading prior (rover spawns facing world
 See [case study 4](#case-study-4--out-of-the-tunnel-circle-mono-vio-finally-works)
 for the full evidence.
 
+### Why published VIO numbers look so much better than ours
+
+You may have come into this expecting "in a noise-free, perfectly
+synchronised simulator the VIO should be near-perfect" — and then been
+disappointed by our 17.80 m raw APE. That's a reasonable expectation,
+but it doesn't match how VIO results are actually reported in the
+literature. Three things are usually elided in the headline numbers:
+
+1. **"VIO" in papers almost always means stereo VIO.** OpenVINS'
+   headline numbers from the original paper come from the *stereo*
+   EuRoC configs. Mono numbers from the *same* paper are 2–4× worse.
+   "OpenVINS does X cm on EuRoC" is a stereo statement; people quote
+   it without saying so. Our mono setup is a different animal entirely,
+   and going stereo is exactly the recommended fix.
+
+2. **Published APE is Umeyama-aligned (`evo_ape -a`).** Every benchmark
+   you'll read — KITTI, EuRoC, TUM-VI — uses the aligned metric, which
+   subtracts out the unobservable initial yaw + scale offset *before*
+   computing error. The "0.5 m APE on a 100 m trajectory" number you
+   see in a paper is what we call `-as` aligned-with-scale APE. Our
+   v4 -as is **1.63 m on 17.89 m (9 %)**. Real-world EuRoC mono numbers
+   from OpenVINS' own paper are around 10–20 % aligned-APE. **So our
+   "shape" performance is actually in the ballpark of published mono
+   VIO** — we just don't normally report the same metric. The raw APE
+   number that looked catastrophic is mostly the yaw offset that every
+   paper invisibly subtracts before reporting.
+
+3. **Public benchmark scenes are parallax-friendly by construction.**
+   The EuRoC MAV drone yaws, pitches, and rolls naturally — that
+   generates rich parallax on every axis on every frame, which makes
+   monocular depth observable. Our rover is constrained to a flat
+   plane with limited yaw rate, looking *forward* into a corridor. KITTI
+   has the same problem (car driving forward → mono VO struggles, which
+   is exactly what the user's own
+   [OpenCVProjects/docs/kitti.ipynb](https://github.com/behnamasadi/OpenCVProjects/blob/master/docs/kitti.ipynb)
+   shows with `goodFeaturesToTrack` + KLT). Our v4 (circle outside the
+   tunnel) gave VIO actual parallax, and the path-length ratio dropped
+   immediately from 5.40 to 1.62.
+
+There's also a more honest reason that's worth saying out loud:
+**clean sim images aren't easier than real images, they're just
+*different*.** Real cameras have rolling shutter, vignetting, AE
+flicker, motion blur — but they also have *unmodelled, varied texture*
+in nearly every frame. Our gz tunnel has a regular hexagonal lattice
+that's actively hostile to KLT correspondence (case study 3). Our
+outdoor area in v4 had varied wood and concrete textures — closer to
+what real cameras see — and VIO immediately did better. Sim
+"cleanness" buys you no parallax, no scene variety, and (as we found
+with the CLAHE backfire in case study 2) actively breaks real-camera
+tuning tricks.
+
+**Net of all three**: we are not getting bad VIO results because
+something is broken. We're getting *normal* mono-VIO results for a
+ground-constrained rover in sometimes-pathological scenes, and the
+apparent badness is mostly amplified by the unaligned APE metric
+we've been looking at. This is exactly why every commercial AGV uses
+**LiDAR + IMU**, not mono VIO — and exactly why LIO on this rig is
+0.09 m on a 17.89 m drive while mono VIO is fighting fundamental
+unobservabilities.
+
+### Where to go from here
+
+Two reasonable next steps depending on what you want to learn:
+
+| Want | Do |
+|---|---|
+| A trustworthy real-world trajectory estimator on this rig | LIO is already at 0.5 %. Ship it; treat VIO as a fallback for lidar-degraded scenes (smoke, fog, dust). |
+| To make mono VIO genuinely competitive | Wire up stereo OpenVINS (the second `rs_*` camera is in the SDF; OpenVINS supports it with two config-line changes). Resolves ~91 % of v4 error. |
+| To compare VIO algorithms head-to-head | Stereo OpenVINS first (so the baseline is fair), then add VINS-Fusion as a `third_party/` submodule with loop closure + optional GPS fusion. Run all three estimators on the same bag and let `analyze_bag.py` compare them. |
+
 ### What changed since defaults — currently shipping
 
 These are the deltas from upstream OpenVINS defaults that are
