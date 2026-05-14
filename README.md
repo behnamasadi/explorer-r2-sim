@@ -588,45 +588,70 @@ Divergence between the colored trails and the yellow GT is the
 per-estimator drift; divergence between two colored trails is their
 relative disagreement.
 
-### Quantitative comparison (`evo`)
+### Quantitative comparison via rosbag + `evo`
 
-Three scripts in `scripts/` automate the record-and-evaluate loop:
+Workflow proven on the rig — Mode 1 already starts gz, the robot,
+bridge, RViz, `gt_to_path.py`, VIO, and LIO together. To evaluate a
+specific drive run:
+
+```bash
+# Terminal 1 — bring up Mode 1:
+cd ~/ros2_ws/src/explorer_r2_sim
+docker compose up
+
+# Wait 10-15 s after the sim is up so VIO can settle and (try to) init
+# before the first motion. Then in Terminal 2 record everything you'll
+# need for offline analysis:
+mkdir -p ~/ros2_ws/runs
+docker compose exec sim bash -ic "ros2 bag record \
+  -o /ws/runs/run_$(date -u +%Y%m%dT%H%M%SZ) \
+  /imu /rs_front/image /rs_front/camera_info \
+  /lidar/points /lidar/points_lio \
+  /ground_truth/pose /ground_truth/odom /ground_truth/path \
+  /ov_msckf/odomimu /ov_msckf/pathimu \
+  /Odometry /path \
+  /cmd_vel /tf /tf_static"
+
+# Terminal 3 — drive the rover. A 40-60 s mix is enough — stationary,
+# slow forward, sharp turn, fast straight, stop.
+# Ctrl-C terminal 2 when done. Bag lives in ~/ros2_ws/runs/run_<UTC>/.
+
+# Offline (host or container — needs evo):
+pip3 install evo --user --break-system-packages
+mkdir -p /tmp/eval && cd /tmp/eval
+evo_traj bag2 ~/ros2_ws/runs/run_<UTC> \
+  /ground_truth/odom /ov_msckf/odomimu /Odometry --save_as_tum
+# Three .tum files now in cwd. APE with Umeyama alignment (handles
+# arbitrary yaw offset between estimator world frames and GT):
+evo_ape tum ground_truth_odom.tum ov_msckf_odomimu.tum -va --plot --plot_mode xy
+evo_ape tum ground_truth_odom.tum Odometry.tum            -va --plot --plot_mode xy
+```
+
+The `-a` (align) flag is important when comparing VIO to GT: OpenVINS'
+`global` frame has an arbitrary yaw relative to gz world (IMU-only init
+can't determine yaw — see [VIO yaw ambiguity](docs/ANALYSIS.md)). `-a`
+runs Umeyama rigid-body alignment that subtracts out the unobservable
+yaw and measures the *real* drift.
+
+For an exemplar case-study of what the analysis shows on a 155-second
+forward-driving run — including why mono VIO produces 195 m of end-point
+error while LIO matches GT within 0.6 m — see
+**[`docs/ANALYSIS.md`](docs/ANALYSIS.md)**.
+
+#### Convenience scripts
+
+Three scripts in `scripts/` wrap the above:
 
 | Script              | What it does                                                                                                       |
 |---------------------|--------------------------------------------------------------------------------------------------------------------|
-| `gt_to_path.py`     | Subscribes to `/ground_truth/pose` (TFMessage), extracts the `explorer_r2` transform, republishes `/ground_truth/path` (`nav_msgs/Path`) so `evo` can ingest it. |
-| `record_run.sh tag` | Records a bag with `/ground_truth/path`, `/model/explorer_r2/odometry`, `/ov_msckf/*`, `/Odometry`, `/path`, `/cmd_vel` to `~/.local/share/evo/<tag>/<UTC>/`. |
-| `eval.sh <bag-dir>` | Converts each trajectory topic to TUM, runs `evo_ape` (APE) and `evo_rpe` (RPE) per estimator vs ground truth, writes per-estimator PNG plots and a `summary.txt`. |
+| `gt_to_path.py`     | Auto-started by `world.launch.py`. Republishes gz `/ground_truth/pose` (TFMessage) as `/ground_truth/path` + `/ground_truth/odom` in `explorer_r2/odom`, origin-subtracted, with valid timestamps. |
+| `record_run.sh tag` | Wraps the `ros2 bag record` above with a UTC-stamped path under `~/.local/share/evo/<tag>/`.                       |
+| `eval.sh <bag-dir>` | Extracts TUM + runs `evo_ape` and `evo_rpe` per estimator vs ground truth; writes per-estimator PNG plots and a `summary.txt`. |
 
-Install `evo` once (inside the container or on the host — your call):
-```bash
-pip install evo --user
-```
-
-Three-terminal workflow:
-
-```bash
-# Terminal 1 — sim:
-docker compose up
-
-# Terminal 2 — VIO + LIO + ground-truth-path publisher:
-docker compose exec sim bash -ic "ros2 launch explorer_r2_sim vio.launch.py" &
-docker compose exec sim bash -ic "ros2 launch explorer_r2_sim lio.launch.py" &
-docker compose exec sim bash -ic "ros2 run explorer_r2_sim gt_to_path.py"
-
-# Terminal 3 — drive a scenario + record:
-docker compose exec sim bash -ic "ros2 run explorer_r2_sim record_run.sh slow_loop"
-# Drive the joystick / keyboard to execute the slow_loop profile.
-# Ctrl-C when done.
-
-# Then evaluate:
-docker compose exec sim bash -ic \
-  "ros2 run explorer_r2_sim eval.sh ~/.local/share/evo/slow_loop/<UTC>"
-```
-
-`scenarios/README.md` documents five canonical drive profiles (`static`,
-`slow_loop`, `fast_straight`, `sharp_turn`, `featureless_wall`) and rough
-sanity bands for what counts as a healthy APE RMSE on this rig.
+`scenarios/README.md` documents five canonical drive profiles
+(`static`, `slow_loop`, `fast_straight`, `sharp_turn`,
+`featureless_wall`) and rough sanity bands for what counts as a healthy
+APE RMSE on this rig.
 
 ## Parameters and tuning
 

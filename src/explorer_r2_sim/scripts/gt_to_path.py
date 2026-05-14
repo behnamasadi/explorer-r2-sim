@@ -77,7 +77,15 @@ class GroundTruthToPath(Node):
                     f"GT origin captured: ({t.x:.3f}, {t.y:.3f}, {t.z:.3f})")
 
             ps = PoseStamped()
-            ps.header.stamp = tf.header.stamp
+            # The ros_gz bridge leaves tf.header.stamp at (0, 0) for
+            # /world/<w>/dynamic_pose/info — that breaks evo_ape because
+            # it can't time-match against estimator outputs that DO have
+            # stamps. Fall back to the node's clock (which uses sim_time
+            # when launched with use_sim_time:=true).
+            stamp = tf.header.stamp
+            if stamp.sec == 0 and stamp.nanosec == 0:
+                stamp = self.get_clock().now().to_msg()
+            ps.header.stamp = stamp
             ps.header.frame_id = self.fixed_frame
             ps.pose.position.x = t.x - self.origin[0]
             ps.pose.position.y = t.y - self.origin[1]
