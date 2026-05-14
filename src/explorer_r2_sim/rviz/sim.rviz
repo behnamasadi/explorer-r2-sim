@@ -161,21 +161,40 @@ Visualization Manager:
         Value: /ov_msckf/pathimu
       Value: true
 
+    # 3D tracked features. /points_msckf = active in the filter,
+    # short-lived (churn fast). /points_slam = SLAM-mode features kept
+    # in state, longer-lived (more stable, fewer of them).
     - Class: rviz_default_plugins/PointCloud2
       Name: VIO MSCKF Features
       Enabled: true
       Style: Points
-      Size (Pixels): 3
-      Color Transformer: AxisColor
+      Size (Pixels): 5
+      Color: 50; 200; 50
+      Color Transformer: FlatColor
       Topic:
         Depth: 5
         Reliability Policy: Best Effort
         Value: /ov_msckf/points_msckf
       Value: true
 
+    - Class: rviz_default_plugins/PointCloud2
+      Name: VIO SLAM Features
+      Enabled: true
+      Style: Spheres
+      Size (m): 0.15
+      Color: 255; 100; 100
+      Color Transformer: FlatColor
+      Topic:
+        Depth: 5
+        Reliability Policy: Best Effort
+        Value: /ov_msckf/points_slam
+      Value: true
+
+    # 2D feature tracks overlaid on the live camera frame. Shows what
+    # VIO is actually following — useful for debugging feature loss.
     - Class: rviz_default_plugins/Image
       Name: VIO Track Image
-      Enabled: false
+      Enabled: true
       Topic:
         Depth: 5
         Reliability Policy: Best Effort
