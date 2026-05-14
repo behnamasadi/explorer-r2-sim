@@ -62,9 +62,25 @@ else
 fi
 
 # ─── Build ──────────────────────────────────────────────────────────────
+# Is the install/ tree complete? Check every required package's install
+# dir, not just install/setup.bash — a previously-failed build can leave
+# the setup script in place while the package itself is missing.
+needs_build=false
+if [ ! -f install/setup.bash ]; then
+    needs_build=true
+else
+    for pkg in "${PKGS[@]}"; do
+        if [ ! -d "install/${pkg}" ]; then
+            echo "[entrypoint] install/ is incomplete (missing ${pkg}) — will rebuild"
+            needs_build=true
+            break
+        fi
+    done
+fi
+
 case "${BUILD:-auto}" in
     skip)
-        echo "[entrypoint] BUILD=skip — using existing install/"
+        echo "[entrypoint] BUILD=skip — using existing install/ (no completeness check)"
         ;;
     force)
         echo "[entrypoint] BUILD=force — full rebuild: ${PKGS[*]}"
@@ -72,11 +88,11 @@ case "${BUILD:-auto}" in
         colcon build --symlink-install --packages-select "${PKGS[@]}"
         ;;
     *)
-        if [ ! -f install/setup.bash ]; then
-            echo "[entrypoint] First-time build: ${PKGS[*]}"
+        if [ "${needs_build}" = "true" ]; then
+            echo "[entrypoint] Building: ${PKGS[*]}"
             colcon build --symlink-install --packages-select "${PKGS[@]}"
         else
-            echo "[entrypoint] install/ present — skipping build (set BUILD=force to rebuild)"
+            echo "[entrypoint] install/ is complete — skipping build (set BUILD=force to rebuild)"
         fi
         ;;
 esac
