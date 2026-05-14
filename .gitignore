@@ -42,3 +42,5 @@ vio_run/
 # third_party/ submodules. Generated at runtime; not committed.
 /src/open_vins
 /src/fast_lio
+/src/vins
+/src/vins_camera_models
