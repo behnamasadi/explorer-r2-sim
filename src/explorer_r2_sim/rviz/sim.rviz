@@ -222,6 +222,33 @@ Visualization Manager:
         Value: /cloud_registered
       Value: true
 
+    # ─── Ground truth (always on, populated by gt_to_path.py) ──────
+    - Class: rviz_default_plugins/Odometry
+      Name: GT Odom
+      Enabled: true
+      Keep: 200
+      Position Tolerance: 0.1
+      Angle Tolerance: 0.1
+      Covariance: {Position: {Value: false}, Orientation: {Value: false}, Value: false}
+      Shape: {Color: 240; 200; 0, Value: Arrow, Alpha: 1, Axes Length: 0.3, Axes Radius: 0.05, Head Length: 0.2, Head Radius: 0.08, Shaft Length: 0.5, Shaft Radius: 0.04}
+      Topic:
+        Depth: 5
+        Reliability Policy: Reliable
+        Value: /ground_truth/odom
+      Value: true
+
+    - Class: rviz_default_plugins/Path
+      Name: GT Path
+      Enabled: true
+      Color: 240; 200; 0
+      Line Style: Lines
+      Line Width: 0.08
+      Topic:
+        Depth: 5
+        Reliability Policy: Reliable
+        Value: /ground_truth/path
+      Value: true
+
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

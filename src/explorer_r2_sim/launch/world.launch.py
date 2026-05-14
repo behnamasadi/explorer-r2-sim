@@ -137,6 +137,19 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("rqt_steering")),
     )
 
+    # Ground-truth republisher: converts /ground_truth/pose (TFMessage from
+    # gz) into /ground_truth/path (Path) + /ground_truth/odom (Odometry) so
+    # RViz can draw the GT trail and arrow alongside VIO / LIO / wheel-odom
+    # in the same view. Subtracts the first sample so the trail starts at
+    # the same origin as wheel-odom.
+    gt_to_path = Node(
+        package="explorer_r2_sim",
+        executable="gt_to_path.py",
+        name="gt_to_path",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument("gui",     default_value="true"),
         DeclareLaunchArgument("rviz",    default_value="true"),
@@ -168,4 +181,5 @@ def generate_launch_description():
         joy_node,
         joy_teleop_node,
         rqt_steering,
+        gt_to_path,
     ])
