@@ -12,6 +12,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -42,8 +43,26 @@ def generate_launch_description():
         }.items(),
     )
 
+    # Glue OpenVINS' `global` frame to the sim's `explorer_r2/odom` so RViz
+    # can transform /ov_msckf/* into the fixed frame. Identity at startup;
+    # OpenVINS drifts away from this static link over time — that's how
+    # we visualise its error against ground truth.
+    vio_world_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="vio_world_to_odom",
+        arguments=[
+            "--x", "0", "--y", "0", "--z", "0",
+            "--roll", "0", "--pitch", "0", "--yaw", "0",
+            "--frame-id", "explorer_r2/odom",
+            "--child-frame-id", "global",
+        ],
+        output="screen",
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument("vio_config_path", default_value=default_cfg,
                               description="OpenVINS estimator_config.yaml"),
+        vio_world_tf,
         ov_launch,
     ])

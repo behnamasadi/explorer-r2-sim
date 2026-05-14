@@ -54,9 +54,27 @@ def generate_launch_description():
         output="screen",
     )
 
+    # Glue FAST_LIO's `camera_init` frame to the sim's `explorer_r2/odom`
+    # so RViz can transform /Odometry, /path, /cloud_registered into the
+    # fixed frame. Identity at startup; LIO drifts from this static link
+    # over time — same idea as the VIO glue transform.
+    lio_world_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="lio_world_to_odom",
+        arguments=[
+            "--x", "0", "--y", "0", "--z", "0",
+            "--roll", "0", "--pitch", "0", "--yaw", "0",
+            "--frame-id", "explorer_r2/odom",
+            "--child-frame-id", "camera_init",
+        ],
+        output="screen",
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument("lio_config_path", default_value=default_cfg,
                               description="FAST_LIO YAML config"),
+        lio_world_tf,
         lidar_adapter,
         fast_lio_node,
     ])
