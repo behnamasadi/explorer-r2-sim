@@ -1,0 +1,30 @@
+%YAML:1.0
+# Camera-to-IMU extrinsics + intrinsics for the front RealSense (rs_front).
+#
+# Mono-VIO setup → only cam0. To go stereo later, add a second physical camera
+# in models/explorer_r2/model.sdf (e.g. rs_front_right with a small baseline)
+# and add cam1 here.
+#
+# T_imu_cam : 4x4 SE(3) — point in CAMERA OPTICAL frame → expressed in IMU frame.
+#   IMU is at base_link origin (no <pose> in the SDF).
+#   rs_front gz-camera frame: pose = (0.565, 0, 0.245, 0, 0, 0) wrt base_link.
+#     gz-cam axes: x forward, y left, z up
+#   Optical frame axes: x right, y down, z forward
+#   So R_imu←opt = | 0  0  1 |
+#                  |-1  0  0 |
+#                  | 0 -1  0 |
+#   t_imu = (0.565, 0, 0.245)
+
+cam0:
+  T_imu_cam:
+    - [ 0.0,  0.0,  1.0,  0.565]
+    - [-1.0,  0.0,  0.0,  0.000]
+    - [ 0.0, -1.0,  0.0,  0.245]
+    - [ 0.0,  0.0,  0.0,  1.000]
+  cam_overlaps: []
+  camera_model: pinhole
+  distortion_model: radtan
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  intrinsics: [277.1, 277.1, 160.5, 120.5]   # fu, fv, cu, cv
+  resolution: [320, 240]
+  rostopic: /rs_front/image

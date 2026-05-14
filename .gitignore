@@ -1,0 +1,38 @@
+# colcon build outputs
+build/
+install/
+log/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local environment overrides
+.env.local
+*.local
+
+# Rosbags
+*.db3
+*.mcap
+vio_run/
+
+# Packages that live in this workspace for shared colcon convenience but
+# belong to other projects — kept on disk, excluded from this repo:
+/src/cropping_pointcloud/
+/src/pmd-royale-ros/
+/third_party/royale-5.10.1/
+/docker/pmd/
+/docker/pmd-cropper/

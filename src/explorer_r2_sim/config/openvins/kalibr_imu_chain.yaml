@@ -1,0 +1,29 @@
+%YAML:1.0
+# IMU calibration chain for OpenVINS.
+#
+# T_i_b : transform from IMU body frame to robot body. Identity since the SDF
+# places imu_sensor at base_link origin with no rotation.
+#
+# Noise tuned to a Bosch BMI088 / Xsens MTi-3 grade MEMS unit (mid-tier
+# hobby/research IMU you can actually buy). Numbers are CONTINUOUS-TIME
+# noise densities derived from the SDF's per-sample stddev at 250 Hz:
+#   density = stddev / sqrt(rate)
+#   gyro:  2.0e-3 / sqrt(250) ≈ 1.27e-4 rad/s/√Hz   (BMI088 datasheet: 1.4e-4)
+#   accel: 3.0e-2 / sqrt(250) ≈ 1.90e-3 m/s²/√Hz   (BMI088 datasheet: 1.7e-3)
+# Random walks are typical for that part class; tune if the filter is
+# over-/under-confident. Bump stddev 5-10× to simulate cheap MPU-9250.
+
+imu0:
+  T_i_b:
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+  accelerometer_noise_density:    1.90e-3   # m / s² / sqrt(Hz)
+  accelerometer_random_walk:      6.00e-4   # m / s³ / sqrt(Hz)
+  gyroscope_noise_density:        1.27e-4   # rad / s / sqrt(Hz)
+  gyroscope_random_walk:          1.00e-5   # rad / s² / sqrt(Hz)
+  rostopic: /imu
+  time_offset: 0.0
+  update_rate: 250.0
+  model: "kalibr"

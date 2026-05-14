@@ -1,0 +1,7 @@
+[submodule "third_party/open_vins"]
+	path = third_party/open_vins
+	url = https://github.com/rpng/open_vins.git
+[submodule "third_party/FAST_LIO"]
+	path = third_party/FAST_LIO
+	url = https://github.com/hku-mars/FAST_LIO.git
+	branch = ROS2

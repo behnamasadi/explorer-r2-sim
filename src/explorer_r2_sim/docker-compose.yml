@@ -1,0 +1,59 @@
+name: explorer_r2_sim
+
+# One service: `sim` runs Gazebo + ros_gz_bridge + RViz inside the container.
+# Network mode host so any sensor-fusion node you spin up later (in another
+# container or on the host) shares the same DDS bus automatically.
+#
+# Usage:
+#   docker compose up                   # gz + bridge + RViz
+#   docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py teleop:=true
+#   docker compose run --rm sim bash    # interactive shell inside the image
+#
+# After bring-up, drive from any other ROS 2 terminal sharing ROS_DOMAIN_ID:
+#   ros2 run teleop_twist_keyboard teleop_twist_keyboard
+
+services:
+  sim:
+    build:
+      context: .
+      dockerfile: docker/sim.Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-jazzy}
+        GZ_PKG:     ${GZ_PKG:-gz-harmonic}
+    image: explorer_r2_sim/sim:${ROS_DISTRO:-jazzy}
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+      DISPLAY: ${DISPLAY}
+      QT_X11_NO_MITSHM: 1
+      XDG_RUNTIME_DIR: /tmp/runtime-root
+      NVIDIA_DRIVER_CAPABILITIES: all
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Persist Fuel asset cache so cave tiles + r2 mesh only download once.
+      # Volume names retained from the prior package name so the existing
+      # cache (cave + tunnel tiles + EXPLORER_R2 mesh) is reused.
+      - fuel:/root/.gz/fuel
+      - fuel_ign:/root/.ignition/fuel
+      # Joystick: bind /dev/input so joy_node can open jsX / eventX.
+      - /dev/input:/dev/input
+    devices:
+      - /dev/dri:/dev/dri
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  fuel:
+    name: cave_robot_cave_robot_fuel
+    external: true
+  fuel_ign:
+    name: cave_robot_cave_robot_fuel_ign
+    external: true
