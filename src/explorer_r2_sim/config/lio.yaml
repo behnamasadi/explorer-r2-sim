@@ -10,7 +10,12 @@
         map_file_path: ""
 
         common:
-            lid_topic:  "/lidar/points"
+            # /lidar/points_lio is the enriched output of
+            # lidar_field_adapter.py — it carries the per-point ring + t
+            # fields that the Ouster preprocessor needs but gz gpu_lidar
+            # doesn't publish. Don't point at /lidar/points directly or
+            # FAST_LIO will silently drop every scan.
+            lid_topic:  "/lidar/points_lio"
             imu_topic:  "/imu"
             time_sync_en: false
             time_offset_lidar_to_imu: 0.0
