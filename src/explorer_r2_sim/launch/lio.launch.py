@@ -24,7 +24,10 @@ def generate_launch_description():
     pkg_share = get_package_share_directory("explorer_r2_sim")
     default_cfg = os.path.join(pkg_share, "config", "lio.yaml")
 
-    config_path = LaunchConfiguration("config_path")
+    # Arg is `lio_config_path` (not the more obvious `config_path`) so that
+    # this launch can be IncludeLaunchDescription'd alongside vio.launch.py
+    # from cave.launch.py without the two clobbering each other's value.
+    lio_config_path = LaunchConfiguration("lio_config_path")
 
     # Geometry params match models/explorer_r2/model.sdf's gpu_lidar.
     lidar_adapter = Node(
@@ -47,12 +50,12 @@ def generate_launch_description():
         package="fast_lio",
         executable="fastlio_mapping",
         name="fastlio_mapping",
-        parameters=[config_path, {"use_sim_time": True}],
+        parameters=[lio_config_path, {"use_sim_time": True}],
         output="screen",
     )
 
     return LaunchDescription([
-        DeclareLaunchArgument("config_path", default_value=default_cfg,
+        DeclareLaunchArgument("lio_config_path", default_value=default_cfg,
                               description="FAST_LIO YAML config"),
         lidar_adapter,
         fast_lio_node,

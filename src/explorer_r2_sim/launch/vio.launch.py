@@ -20,7 +20,10 @@ def generate_launch_description():
     default_cfg = os.path.join(
         pkg_share, "config", "openvins", "estimator_config.yaml")
 
-    config_path = LaunchConfiguration("config_path")
+    # Arg is `vio_config_path` (not the more obvious `config_path`) so that
+    # this launch can be IncludeLaunchDescription'd alongside lio.launch.py
+    # from cave.launch.py without the two clobbering each other's value.
+    vio_config_path = LaunchConfiguration("vio_config_path")
 
     # Re-use OpenVINS' own subscribe.launch.py — it knows how to bring up
     # run_subscribe_msckf with the right parameter wiring.
@@ -31,7 +34,7 @@ def generate_launch_description():
             ])
         ),
         launch_arguments={
-            "config_path":  config_path,
+            "config_path":  vio_config_path,
             "use_stereo":   "false",
             "max_cameras":  "1",
             "verbosity":    "INFO",
@@ -40,7 +43,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        DeclareLaunchArgument("config_path", default_value=default_cfg,
+        DeclareLaunchArgument("vio_config_path", default_value=default_cfg,
                               description="OpenVINS estimator_config.yaml"),
         ov_launch,
     ])

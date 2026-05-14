@@ -66,6 +66,10 @@ class LidarFieldAdapter(Node):
     # ------------------------------------------------------------------
     # Output point dtype matches ouster_ros::Point field names — FAST_LIO
     # looks these up by name via PCL's PointCloud2 → PointCloud conversion.
+    # Field types match FAST_LIO's ouster_ros::Point definition exactly
+    # (preprocess.h: ring is std::uint8_t, not uint16). PCL matches
+    # PointCloud2 fields by NAME and TYPE — a UINT16 ring won't bind to
+    # a uint8_t struct member.
     _OUT_DTYPE = np.dtype([
         ("x",            np.float32),
         ("y",            np.float32),
@@ -73,7 +77,7 @@ class LidarFieldAdapter(Node):
         ("intensity",    np.float32),
         ("t",            np.uint32),
         ("reflectivity", np.uint16),
-        ("ring",         np.uint16),
+        ("ring",         np.uint8),
         ("ambient",      np.uint16),
         ("range",        np.uint32),
     ])
@@ -85,7 +89,7 @@ class LidarFieldAdapter(Node):
         ("intensity",    PointField.FLOAT32),
         ("t",            PointField.UINT32),
         ("reflectivity", PointField.UINT16),
-        ("ring",         PointField.UINT16),
+        ("ring",         PointField.UINT8),
         ("ambient",      PointField.UINT16),
         ("range",        PointField.UINT32),
     ]
@@ -106,7 +110,7 @@ class LidarFieldAdapter(Node):
         r_xy = np.sqrt(x * x + y * y)
         elev = np.arctan2(z, np.maximum(r_xy, 1e-9))
         ring_f = (elev - self.min_elev) / self.elev_span * (self.N - 1)
-        ring = np.clip(np.round(ring_f), 0, self.N - 1).astype(np.uint16)
+        ring = np.clip(np.round(ring_f), 0, self.N - 1).astype(np.uint8)
 
         # t (per-point time offset within scan) — linear in azimuth
         azi = np.arctan2(y, x)
