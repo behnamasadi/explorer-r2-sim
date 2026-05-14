@@ -223,17 +223,60 @@ docker compose up
 
 ### What runs in Mode 1
 
-| Component                | Started by                       | Topic(s) produced                                       | RViz display |
-|--------------------------|----------------------------------|---------------------------------------------------------|--------------|
-| **gz sim**               | `world.launch.py` (included)     | sensor topics: `/imu`, `/lidar/points`, `/rs_front/*`, `/navsat`, … | Lidar Cloud, RS Front Camera/Cloud, TF |
-| **EXPLORER_R2 + DiffDrive** | `spawn_robot.launch.py` (included) | `/model/explorer_r2/odometry`                            | **Wheel Odom** (red arrow) |
-| **OpenVINS (VIO)**       | `vio.launch.py` (included)       | `/ov_msckf/odomimu`, `/ov_msckf/pathimu`, `/ov_msckf/points_msckf`, … | **VIO Odom** (green) + **VIO Path** + feature cloud |
-| **FAST_LIO (LIO)**       | `lio.launch.py` (included)       | `/Odometry`, `/path`, `/cloud_registered`                | **LIO Odom** (blue) + **LIO Path** + map cloud |
-| **Ground truth**         | `world.launch.py` (gz)           | `/ground_truth/pose` (TFMessage)                         | TF, frame `explorer_r2` |
+| Component                   | Started by                       | Topic(s) produced                                                                    | RViz display                                                                  |
+|-----------------------------|----------------------------------|--------------------------------------------------------------------------------------|-------------------------------------------------------------------------------|
+| **gz sim**                  | `world.launch.py`                | sensor topics: `/imu`, `/lidar/points`, `/rs_front/*`, `/navsat`, …                  | Lidar Cloud, RS Front Camera/Cloud, TF                                        |
+| **EXPLORER_R2 + DiffDrive** | `spawn_robot.launch.py`          | `/model/explorer_r2/odometry`                                                        | **Wheel Odom** (🔴 red arrow) — drifty, like real encoders                     |
+| **OpenVINS (VIO)**          | `vio.launch.py`                  | `/ov_msckf/odomimu`, `/ov_msckf/pathimu`, `/ov_msckf/points_msckf`, `/points_slam`, `/trackhist` | **VIO Odom** (🟢 green arrow) + **VIO Path** + three feature views (see below) |
+| **FAST_LIO (LIO)**          | `lio.launch.py`                  | `/Odometry`, `/path`, `/cloud_registered`                                            | **LIO Odom** (🔵 blue arrow) + **LIO Path** + accumulated **LIO Map**           |
+| **Ground truth**            | `world.launch.py` + `gt_to_path.py` | `/ground_truth/pose` (TFMessage), `/ground_truth/path`, `/ground_truth/odom`         | **GT Odom** (🟡 yellow arrow) + **GT Path** (thicker yellow line) — the reference |
+
+All five trails overlay on the **single `rviz/sim.rviz`** orbit view:
+🔴 wheel-odom, 🟢 VIO, 🔵 LIO, 🟡 ground truth. The yellow is the truth;
+the gap between it and the colored estimates is each estimator's drift.
 
 VIO needs **~3-5 s of camera motion** to initialise (parallax requirement).
 LIO converges within ~1-2 lidar frames. Drive the robot (joystick / keyboard
 / rqt sliders — see [How to drive the robot](#how-to-drive-the-robot)).
+
+#### Watching VIO's feature tracks
+
+OpenVINS publishes three different views of what it's tracking — all three
+are wired into `rviz/sim.rviz` by default:
+
+| RViz display          | Topic                       | What it is                                                                                                | Style                       |
+|-----------------------|-----------------------------|-----------------------------------------------------------------------------------------------------------|-----------------------------|
+| **VIO MSCKF Features** | `/ov_msckf/points_msckf`    | Short-lived features currently active in the MSCKF filter. Churn fast as the camera moves.                | 3D green points (5 px)      |
+| **VIO SLAM Features**  | `/ov_msckf/points_slam`     | Long-lived SLAM features kept in state for loop closure. Fewer of them, more stable.                       | 3D red spheres (0.15 m)     |
+| **VIO Track Image**    | `/ov_msckf/trackhist`       | The live `rs_front` camera image with 2D feature tracks drawn on top.                                      | 2D image panel              |
+
+The MSCKF / SLAM clouds are in 3D world coordinates and overlay directly on
+the orbit view; the track image lives in its own RViz panel. If the MSCKF
+cloud gets visually noisy with many features, toggle its display off — the
+SLAM features are usually enough to gauge tracking health.
+
+#### Sensor-fusion frame glue
+
+VIO publishes its odometry / paths / feature clouds with `frame_id =
+global` (OpenVINS' world frame), and LIO with `frame_id = camera_init`
+(FAST_LIO's). Neither frame is naturally connected to the sim's
+`explorer_r2/odom` TF tree, so RViz can't transform them — you'd see
+"Could not transform from [global] to [explorer_r2/odom]" errors in the
+TF panel and in every estimator display.
+
+`vio.launch.py` and `lio.launch.py` publish identity static transforms
+to glue these frames together at startup:
+
+| static_transform_publisher | Parent              | Child         | Purpose                                                  |
+|----------------------------|---------------------|---------------|----------------------------------------------------------|
+| `vio_world_to_odom`        | `explorer_r2/odom`  | `global`      | Anchor OpenVINS' world to the sim TF tree                |
+| `lio_world_to_odom`        | `explorer_r2/odom`  | `camera_init` | Anchor FAST_LIO's world to the sim TF tree               |
+
+Static **identity** by design: at t=0 the estimators are aligned with
+truth at the origin (because `gt_to_path.py` also captures its origin
+on the first sample). VIO and LIO then drift *relative to this static
+link* over time — that drift is exactly what the visual gap between
+the colored trails and the yellow GT trail shows.
 
 ### Common Mode 1 overrides
 
@@ -496,26 +539,24 @@ In the rqt window set the topic to `/cmd_vel` (default) and slide.
 
 ### Live visual comparison in RViz
 
-The single `rviz/sim.rviz` layout overlays three things in the same orbit
-view (the VIO displays sit empty in Mode 1 and light up when you start
-Mode 2):
+The single `rviz/sim.rviz` layout overlays **four** trajectories in the
+same orbit view (full description in
+[What runs in Mode 1](#what-runs-in-mode-1) and
+[Watching VIO's feature tracks](#watching-vios-feature-tracks) above):
 
-- **Red arrow**  → `/model/explorer_r2/odometry` — wheel odometry from the
-  DiffDrive plugin (drifts during turns / wheel slip; representative of
-  what real encoders give you).
-- **Green arrow + green path** → `/ov_msckf/odomimu` and
-  `/ov_msckf/pathimu` — OpenVINS' MSCKF estimate.
-- **Ground truth** — comes through `/ground_truth/pose` (a `TFMessage`
-  carrying every dynamic model's true pose). Add a TF display in RViz
-  pinned to frame `explorer_r2` to see the absolute true position.
+- 🔴 **Wheel Odom** → `/model/explorer_r2/odometry` (drifty, encoder-like).
+- 🟢 **VIO Odom / Path** → `/ov_msckf/odomimu`, `/ov_msckf/pathimu`.
+- 🔵 **LIO Odom / Path** → `/Odometry`, `/path`.
+- 🟡 **GT Odom / Path** → `/ground_truth/odom`, `/ground_truth/path`,
+  produced by `gt_to_path.py` (started by `world.launch.py`). Origin
+  subtracted, so GT starts at `(0, 0, 0)` like the other trails for
+  apples-to-apples visual comparison.
 
-Bring up the sim + OpenVINS using the recipe in
-[Run VIO](#run-vio--attach-openvins-to-a-running-sim) above, then drive the
-robot a bit (joystick, keyboard, or rqt_robot_steering). After ~10
-seconds of motion the green VIO trail should snake along behind the red
-wheel-odom trail — divergence between green and red over time tells you
-how much wheel odometry is drifting, while divergence between green and
-the ground-truth TF tells you how much VIO is drifting.
+Drive the robot (joystick, keyboard, or rqt_robot_steering). After
+~10 s of motion, the four trails diverge from the same origin.
+Divergence between the colored trails and the yellow GT is the
+per-estimator drift; divergence between two colored trails is their
+relative disagreement.
 
 ### Quantitative comparison (`evo`)
 
