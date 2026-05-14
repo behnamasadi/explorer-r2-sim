@@ -628,131 +628,25 @@ docker compose exec sim bash -ic \
 `slow_loop`, `fast_straight`, `sharp_turn`, `featureless_wall`) and rough
 sanity bands for what counts as a healthy APE RMSE on this rig.
 
-## Exact sim calibration (cam ↔ IMU ↔ LiDAR)
+## Parameters and tuning
 
-Because everything comes from the SDF, we have **perfect** ground-truth
-extrinsics — feed them straight into VIO, LIO, or any sensor-fusion node
-without running calibration. All poses are relative to `base_link`
-(IMU = base_link, no rotation, no offset).
+Full reference of every sensor's SDF settings, every estimator
+config knob (OpenVINS + FAST_LIO), and the why-behind-each-value
+lives in **[`docs/PARAMETERS.md`](docs/PARAMETERS.md)**. Sections:
 
-### Sensor positions on `base_link`
+- Coordinate conventions (gz / REP-103, optical, estimator frames, TF glue)
+- Sensor positions on `base_link`
+- IMU spec (SDF + `kalibr_imu_chain.yaml`)
+- Camera spec (SDF distortion + `kalibr_imucam_chain.yaml`)
+- LiDAR spec + the `lidar_field_adapter.py` enrichment
+- FAST_LIO config (`config/lio.yaml`)
+- OpenVINS config (`estimator_config.yaml`) — including the
+  sim-specific changes for ZUPT, online-calibration, and init tuning
+- GT republisher (`scripts/gt_to_path.py`)
 
-| Sensor          | Pose (x, y, z, roll, pitch, yaw)            | Notes                                      |
-|-----------------|---------------------------------------------|--------------------------------------------|
-| `imu_sensor`    | `(0.000, 0.000, 0.000, 0, 0, 0)`            | Origin = base_link                         |
-| `magnetometer`  | `(0.000, 0.000, 0.000, 0, 0, 0)`            | Same link as IMU                           |
-| `navsat`        | `(0.000, 0.000, 0.000, 0, 0, 0)`            | Same link as IMU                           |
-| `front_laser`   | `(0.000, 0.000, 1.050, 0, 0, 0)`            | Mast-mounted; clears the payload box       |
-| `rs_front`      | `(0.565, 0.000, 0.245, 0, 0, 0)`            | RGBD, forward                              |
-| `rs_back`       | `(0.250, 0.000, 0.432, 0, 0, π)`            | RGBD, aft                                  |
-| `rs_left`       | `(0.365, 0.133, 0.426, 0, 0, +π/2)`         | RGBD, port                                 |
-| `rs_right`      | `(0.365,-0.133, 0.426, 0, 0, -π/2)`         | RGBD, starboard                            |
-
-(Gz frame convention: x forward, y left, z up. Optical-frame convention
-adds a -π/2 about X then -π/2 about Z to convert from gz-cam → opt.)
-
-### IMU noise model
-
-Pulled directly from `models/explorer_r2/model.sdf`:
-
-| Quantity                       | Value (per axis)                           |
-|--------------------------------|--------------------------------------------|
-| Update rate                    | 250 Hz                                     |
-| Gyro white noise σ             | 2.0 × 10⁻⁴ rad/s                           |
-| Gyro bias random walk          | 8.0 × 10⁻⁷ rad/s²                          |
-| Accel white noise σ            | 1.0 × 10⁻² m/s²                            |
-| Accel bias random walk         | 1.0 × 10⁻³ m/s³                            |
-
-These are converted to continuous-time noise *densities* in
-`config/openvins/kalibr_imu_chain.yaml`:
-
-```yaml
-gyroscope_noise_density:        1.27e-5
-gyroscope_random_walk:          8.0e-7
-accelerometer_noise_density:    6.32e-4
-accelerometer_random_walk:      1.0e-3
-```
-
-### Camera intrinsics (rs_front)
-
-| Param            | Value                                      |
-|------------------|--------------------------------------------|
-| width            | 320                                        |
-| height           | 240                                        |
-| fx, fy           | 277.1, 277.1                               |
-| cx, cy           | 160.5, 120.5                               |
-| H-FOV            | 1.0472 rad (60°)                           |
-| Distortion model | radial-tangential (`radtan`)                |
-| k1, k2           | −0.02, 0.003 (mild barrel; RealSense-like) |
-| p1, p2           | 0, 0                                       |
-| Image noise σ    | 0.01 (norm. 0–1; ≈ 2.5 grey levels of 255) |
-
-These distortion + noise values live in `models/explorer_r2/model.sdf`
-(the gz sensor) and `config/openvins/kalibr_imucam_chain.yaml` (what
-OpenVINS uses to undistort). **Keep them in sync** when tuning — a
-mismatch shows up as systematic VIO drift on straight-line drives.
-
-### LiDAR (front_laser) — Ouster OS0-32 spec
-
-| Param        | Value                |
-|--------------|----------------------|
-| Type         | gpu_lidar            |
-| Update rate  | 15 Hz                |
-| Horizontal   | 1024 samples × 2π    |
-| Vertical     | 16 samples × ±15°    |
-| Range        | 0.05 – 100 m         |
-| Range noise σ| 0.01 m               |
-
-### Using these in OpenVINS (already wired)
-
-`config/openvins/kalibr_imucam_chain.yaml` contains the cam-to-IMU
-SE(3) for `rs_front`:
-
-```yaml
-T_imu_cam:
-  - [ 0.0,  0.0,  1.0,  0.565]
-  - [-1.0,  0.0,  0.0,  0.000]
-  - [ 0.0, -1.0,  0.0,  0.245]
-  - [ 0.0,  0.0,  0.0,  1.000]
-```
-
-(Rows: rotation block converts optical→base_link gz-frame; last column is
-the camera's translation in base_link.)
-
-### LIO — FAST_LIO
-
-LIO ships as an optional submodule at `third_party/FAST_LIO/`, cloned
-from [`hku-mars/FAST_LIO`](https://github.com/hku-mars/FAST_LIO) and
-pinned to its `ROS2` branch. The colcon package is `fast_lio`. It
-subscribes to `/lidar/points` + `/imu` and publishes its own odometry +
-map, so it's environment-agnostic exactly like VIO.
-
-For LiDAR-IMU odometry you need the **lidar-IMU** SE(3). For our rig:
-
-```
-T_imu_lidar:
-  - [1, 0, 0, 0.000]   # lidar 1.05 m above base_link
-  - [0, 1, 0, 0.000]   # no rotation
-  - [0, 0, 1, 1.050]
-  - [0, 0, 0, 1]
-```
-
-YAML for `fast_lio` (`config/lio.yaml` when wired):
-
-```yaml
-mapping:
-  imu_topic: "/imu"
-  lidar_topic: "/lidar/points"
-  extrinsic_T: [ 0.0, 0.0, 1.05 ]
-  extrinsic_R: [ 1, 0, 0,  0, 1, 0,  0, 0, 1 ]
-  acc_cov: 0.4
-  gyr_cov: 0.02
-  b_acc_cov: 0.001
-  b_gyr_cov: 8.0e-7
-```
-
-Drop a `lio.launch.py` next to `vio.launch.py` that loads the config and
-remaps the topics — the rig already publishes everything `fast_lio` needs.
+Edit `models/explorer_r2/model.sdf` or any file under `config/`? Update
+the matching section in `docs/PARAMETERS.md` so the documentation and
+the code stay in sync.
 
 ## Native install (no Docker)
 
