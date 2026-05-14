@@ -125,31 +125,73 @@ Three quick checks distinguish the mono-VIO failures above from
    fine. The issue is specific to the VIO algorithm + this motion
    pattern + this camera.
 
-## What to try next
+## Mono-VIO tuning already applied
 
-In rough order of "small fix first, big rewire later":
+These changes shipped to `config/openvins/estimator_config.yaml` and
+`launch/vio.launch.py` to address the three failure modes above. They
+**only help mono VIO** — for stereo VIO (the real fix) we'd still need
+to wire up a second camera. Apply or revert by flipping a single key
+in each case.
 
-1. **Switch the camera tracker to CLAHE.** Edit
-   `config/openvins/estimator_config.yaml`, set
-   `histogram_method: CLAHE`. Equalises local contrast — usually a
-   big win in dim cave scenes. Cheap to try.
-2. **Drive a more parallax-friendly profile.** Forward driving is the
-   absolute worst case for mono VIO. A figure-8, or even sustained
-   yaw rate with a small forward component, gives the camera much
-   more useful parallax. Even with mono, well-driven motion gets
-   significantly better scale.
-3. **Wait 10–15 s stationary before driving.** Lets the rover settle
-   so OpenVINS' init grabs clean gravity instead of impact data.
-4. **Bump up `init_window_time` to 5+ s** to require more samples
-   before init can succeed. Combined with the wait above, this lets
-   the impact transient pass.
-5. **Stereo VIO** is the real fix. The model already has `rs_left`
-   and `rs_right`. Add a `cam1` block to `kalibr_imucam_chain.yaml`,
-   flip `use_stereo: true` and `max_cameras: 2` in
-   `estimator_config.yaml`. Stereo fixes scale ambiguity for good.
-6. **Accept that LIO wins on this rig.** Cave + lidar + forward
-   driving is LIO's home turf. VIO is here mostly as a comparison
-   target / sanity check / learning vehicle.
+| Where                              | Knob                | Before    | After     | Reason                                                                                                                                                     |
+|------------------------------------|---------------------|-----------|-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `estimator_config.yaml`            | `histogram_method`  | HISTOGRAM | **CLAHE** | Local contrast equalisation. Standard low-light VIO knob; large gain in dim cave scenes.                                                                   |
+| `estimator_config.yaml`            | `num_pts`           | 200       | **400**   | More features per frame to compensate for parallax-starved forward driving.                                                                                |
+| `estimator_config.yaml`            | `fast_threshold`    | 20        | **10**    | More aggressive corner detection on texture-poor cave walls.                                                                                               |
+| `estimator_config.yaml`            | `min_px_dist`       | 10        | **7**     | Allow tighter feature packing.                                                                                                                             |
+| `estimator_config.yaml`            | `track_frequency`   | 21 Hz     | **30 Hz** | Match the camera; don't drop frames the front-end could use.                                                                                               |
+| `estimator_config.yaml`            | `init_window_time`  | 2.0 s     | **5.0 s** | Average over enough stationary samples to nail gravity direction even if init triggers slightly inside the spawn-drop window.                              |
+| `vio.launch.py`                    | `VIO_START_DELAY_SEC` | 0       | **8.0 s** | Don't even subscribe to /imu until the spawn drop has settled. The big one — combined with the longer init window, this is what kills the "init on impact" failure. |
+| `estimator_config.yaml`            | `calib_cam_*`       | true      | **false** | Our SDF-derived calibration is exact; online refinement just adds numerical noise the filter integrates into pose.                                         |
+| `estimator_config.yaml`            | `try_zupt`          | false     | **true**  | Zero-velocity update when stationary. Required to prevent IMU-bias drift from compounding into position while idle.                                        |
+| `estimator_config.yaml`            | `init_dyn_use`      | false     | **true**  | Dynamic-init fallback if static path misses.                                                                                                              |
+
+If after these changes the trail is still wrong, the only remaining
+mono-VIO levers are: a more parallax-friendly drive profile (figure-8
+beats forward-straight), longer stationary wait before commanding the
+first motion, and bumping `max_clones` / `max_slam` for a larger
+sliding window. After those, stereo is the only path that genuinely
+fixes the underlying problem.
+
+## Comparing multiple VIO implementations side by side
+
+Possible — and a natural next step once we're done squeezing OpenVINS.
+The system architecture already supports it:
+
+- `scripts/analyze_bag.py` reads odometry topics by name. To compare a
+  second VIO (e.g. VINS-Fusion, Kimera-VIO, OKVIS2) the only changes
+  are:
+  1. Add the second VIO as a `third_party/` submodule + a small
+     `<name>.launch.py`.
+  2. Tell `analyze_bag.py` the new topic in its `ODOM_TOPICS` dict and
+     give it a colour.
+  3. Optionally: add a corresponding RViz display.
+- Each VIO is just another process subscribed to `/imu` and
+  `/rs_front/image`. They don't interfere with each other.
+- `evo_traj bag2 ... /ground_truth/odom /ov_msckf/odomimu /vins/odom
+  /kimera/odom --save_as_tum` compares all of them in one shot;
+  `evo_res *.zip` gives a side-by-side APE table.
+
+Candidates worth comparing at the mono-cam stage:
+
+| Package        | Repo                                       | Strengths                                                            |
+|----------------|--------------------------------------------|----------------------------------------------------------------------|
+| **OpenVINS**   | rpng/open_vins (already wired)             | MSCKF, clean code, easy to debug.                                    |
+| **VINS-Fusion**| HKUST-Aerial-Robotics/VINS-Fusion          | Tightly-coupled BA + loop closure. Often better on long sequences.   |
+| **Kimera-VIO** | MIT-SPARK/Kimera-VIO                       | Built for SLAM + semantic mapping; needs slightly different config.  |
+| **DLIOM/SVIN** | various                                    | Newer entrants worth tracking.                                       |
+
+If you want to commit to this, the workflow is the same as for adding
+LIO earlier: `git submodule add` under `third_party/`, write the
+launch, add the topic to the analyzer.
+
+## Accept that LIO wins on this rig
+
+Cave + lidar + forward driving is LIO's home turf. VIO is here mostly
+as a comparison target / sanity check / learning vehicle. If you're
+trying to *use* the rover's pose estimate for navigation, fuse LIO
+into wheel-odom with `robot_localization` and trust that; treat VIO
+as the experimental loop.
 
 ## Reproducing this analysis on your own bag
 

@@ -9,11 +9,24 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    TimerAction,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+
+# Seconds to wait after launch before starting OpenVINS itself. The
+# rover spawns at z=0.4, settles to ~z=0.25, and produces an impact
+# transient on /imu during the first second. If OpenVINS subscribes
+# during that window its static-init triggers on impact data and
+# converges to a wrong gravity vector → constant residual acceleration
+# → drift forever. Wait it out.
+VIO_START_DELAY_SEC = 8.0
 
 
 def generate_launch_description():
@@ -60,9 +73,12 @@ def generate_launch_description():
         output="screen",
     )
 
+    # The static TF can start immediately — it has no init phase. Delay
+    # only the actual OpenVINS node so the spawn-drop transient has time
+    # to die out before VIO starts collecting IMU samples for init.
     return LaunchDescription([
         DeclareLaunchArgument("vio_config_path", default_value=default_cfg,
                               description="OpenVINS estimator_config.yaml"),
         vio_world_tf,
-        ov_launch,
+        TimerAction(period=VIO_START_DELAY_SEC, actions=[ov_launch]),
     ])

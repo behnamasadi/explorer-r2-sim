@@ -204,6 +204,41 @@ def plot_xy(odoms: dict[str, OdomTrace], out: Path) -> None:
     plt.close(fig)
 
 
+def plot_3d(odoms: dict[str, OdomTrace], out: Path) -> None:
+    fig = plt.figure(figsize=(11, 9))
+    ax = fig.add_subplot(111, projection="3d")
+    for name in ("GT", "VIO", "LIO"):
+        d = odoms[name].array()
+        if len(d) == 0:
+            continue
+        ax.plot(d[:, 1], d[:, 2], d[:, 3], color=COLORS[name], lw=2,
+                label=f"{name}  end=({d[-1,1]:+.2f}, {d[-1,2]:+.2f}, {d[-1,3]:+.2f})")
+        ax.scatter(d[0, 1], d[0, 2], d[0, 3], color=COLORS[name], s=80,
+                   marker="o", edgecolor="black", linewidth=0.5)
+        ax.scatter(d[-1, 1], d[-1, 2], d[-1, 3], color=COLORS[name], s=80,
+                   marker="s", edgecolor="black", linewidth=0.5)
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    ax.set_zlabel("Z [m]")
+    ax.set_title("Trajectories in 3D (circle = start, square = end)")
+    ax.legend(loc="upper left")
+    # Equalise aspect — matplotlib's 3D axes don't have set_aspect('equal')
+    # robustly across versions, so do the math by hand.
+    all_pts = np.concatenate(
+        [odoms[n].array()[:, 1:4] for n in odoms if len(odoms[n]) > 0])
+    if all_pts.size:
+        mins = all_pts.min(axis=0)
+        maxs = all_pts.max(axis=0)
+        ctr = (mins + maxs) / 2
+        rng = (maxs - mins).max() / 2 * 1.1
+        ax.set_xlim(ctr[0] - rng, ctr[0] + rng)
+        ax.set_ylim(ctr[1] - rng, ctr[1] + rng)
+        ax.set_zlim(ctr[2] - rng, ctr[2] + rng)
+    fig.tight_layout()
+    fig.savefig(out, dpi=110)
+    plt.close(fig)
+
+
 def plot_xyz(odoms: dict[str, OdomTrace], out: Path) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
     labels = ("X [m]", "Y [m]", "Z [m]")
@@ -496,6 +531,7 @@ def main() -> int:
 
     print(f"[analyze_bag] Writing plots to {out_dir}")
     plot_xy(odoms,  out_dir / "trajectory_xy.png")
+    plot_3d(odoms,  out_dir / "trajectory_3d.png")
     plot_xyz(odoms, out_dir / "trajectory_xyz.png")
     plot_imu(imu,   out_dir / "imu_accel.png",
                     out_dir / "imu_gyro.png")

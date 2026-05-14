@@ -243,21 +243,39 @@ polishes the imperfect factory calibration.
 ### Initialisation
 
 ```yaml
-init_window_time: 2.0       # seconds of data to collect for static init
+init_window_time: 5.0       # seconds of data to collect for static init
 init_imu_thresh:  0.3       # m/s² — accel variance needed to declare "motion"
 init_max_disparity: 10.0    # px — pixel disparity max to declare "stationary"
 init_max_features: 50       # features tracked during init
 init_dyn_use: true          # fall back to dynamic init if static fails
 ```
 
-**`init_imu_thresh`** is the variance of accelerometer magnitude
-required, within `init_window_time`, for OpenVINS to detect that the
-rover has been "jerked" — a clear motion event needed to estimate
-gravity direction. The OpenVINS default of `1.5 m/s²` is tuned for real
-IMUs where the noise floor is several times higher than ours; with the
-clean gz IMU (accel σ = 1e-2 m/s²), `1.5` is so high that you have to
-literally yank the rover to trigger init. `0.3` triggers reliably on a
-gentle drive start.
+Plus a hard delay in `launch/vio.launch.py`:
+```python
+VIO_START_DELAY_SEC = 8.0   # don't even subscribe to /imu until t+8s
+```
+
+**Why the delay matters.** The rover spawns at `z=0.4` and settles at
+`z≈0.25` — a brief drop that produces an impact transient on the IMU
+during the first ~1 second. Without the delay, OpenVINS' static init
+triggers in 0.3 ms on the impact, estimates a wrong gravity vector,
+and from that point every accel sample has a constant residual that
+gets integrated into position. ZUPT can't save it because the wrong
+gravity means the filter always predicts a non-zero velocity, so the
+ZUPT velocity gate never fires. The delay lets the impact pass before
+VIO collects any samples.
+
+**`init_window_time: 5 s`** then averages over enough stationary
+samples to nail the gravity direction. Combined with the 8 s delay
+that's 13 s of "clean" pre-init time.
+
+**`init_imu_thresh: 0.3 m/s²`** is the variance of accelerometer
+magnitude required, within `init_window_time`, for OpenVINS to detect
+that the rover has been "jerked." OpenVINS' default of `1.5 m/s²` is
+tuned for real IMUs where the noise floor is several times higher
+than ours; with the clean gz IMU (accel σ = 1e-2 m/s²), `1.5` is so
+high that you have to literally yank the rover to trigger init.
+`0.3` triggers reliably on a gentle drive start.
 
 **`init_dyn_use: true`** enables OpenVINS' dynamic-initialisation
 fallback: if the static path fails (no jerk), it bootstraps from
@@ -313,19 +331,26 @@ on a Raspberry Pi.
 
 ### Tracker (front-end)
 
+Tuned for mono VIO on a forward-driving cave rover — squeeze every bit
+of parallax/feature info out of each frame:
+
 ```yaml
 use_klt: true               # KLT tracker (better than ORB for our setup)
-num_pts: 200                # features extracted per camera per frame
-fast_threshold: 20
+num_pts: 400                # features extracted per camera per frame
+fast_threshold: 10
 grid_x: 5
 grid_y: 5
-min_px_dist: 10
-track_frequency: 21.0       # Hz — sub-rate of the 30 Hz camera
-histogram_method: HISTOGRAM # or CLAHE / NONE; CLAHE helps in dark scenes
+min_px_dist: 7
+track_frequency: 30.0       # Hz — match the rs_front camera's 30 Hz
+histogram_method: CLAHE     # Contrast Limited Adaptive Histogram Eq —
+                            # equalises local contrast, much better
+                            # than global HISTOGRAM in dim cave scenes
 ```
 
-The cave is dim; if VIO struggles to find features in cave runs, try
-`histogram_method: CLAHE`.
+If you push the rover into a brighter environment (outdoor, Singapore
+River, etc.), flip back to `histogram_method: HISTOGRAM` and consider
+dropping `num_pts` back to 200 — CLAHE on already-well-exposed images
+can over-emphasise local noise.
 
 ---
 
