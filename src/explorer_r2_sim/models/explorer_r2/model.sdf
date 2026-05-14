@@ -187,13 +187,19 @@
                     <horizontal_fov>1.0472</horizontal_fov>
                     <lens>
                         <intrinsics>
-                            <!-- fx = fy = width / ( 2 * tan (hfov / 2 ) ) -->
-                            <fx>277.1</fx>
-                            <fy>277.1</fy>
+                            <!-- Bumped 320×240 → 640×480 to give mono VIO
+                                 more pixels per feature (sub-pixel
+                                 localization improves with resolution; the
+                                 σ=0.01 noise floor stays constant in image
+                                 units, so it covers proportionally less of
+                                 each feature).
+                                 fx = fy = width / ( 2 * tan (hfov / 2 ) ) -->
+                            <fx>554.26</fx>
+                            <fy>554.26</fy>
                             <!-- cx = ( width + 1 ) / 2 -->
-                            <cx>160.5</cx>
+                            <cx>320.5</cx>
                             <!-- cy = ( height + 1 ) / 2 -->
-                            <cy>120.5</cy>
+                            <cy>240.5</cy>
                             <s>0</s>
                         </intrinsics>
                     </lens>
@@ -210,8 +216,8 @@
                         <center>0.5 0.5</center>
                     </distortion>
                     <image>
-                        <width>320</width>
-                        <height>240</height>
+                        <width>640</width>
+                        <height>480</height>
                         <format>R8G8B8</format>
                     </image>
                     <clip>

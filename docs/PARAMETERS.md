@@ -119,12 +119,12 @@ startup.
 |------------------|--------------------------------------------|-------------------------------|
 | Pose (in `base_link`) | `(0.565, 0, 0.245)`, no rotation     | `<pose>`                      |
 | Update rate      | 30 Hz                                      | `<update_rate>`               |
-| Image width      | 320 px                                     | `<image><width>`              |
-| Image height     | 240 px                                     | `<image><height>`             |
+| Image width      | 640 px                                     | `<image><width>`              |
+| Image height     | 480 px                                     | `<image><height>`             |
 | H-FOV            | 1.0472 rad (60°)                           | `<horizontal_fov>`            |
 | Format           | `R8G8B8`                                   | `<image><format>`             |
-| fx, fy           | 277.1, 277.1                               | `<intrinsics><fx>`, `<fy>`    |
-| cx, cy           | 160.5, 120.5                               | `<intrinsics><cx>`, `<cy>`    |
+| fx, fy           | 554.26, 554.26                             | `<intrinsics><fx>`, `<fy>`    |
+| cx, cy           | 320.5, 240.5                               | `<intrinsics><cx>`, `<cy>`    |
 | Distortion model | radial-tangential (`radtan`)               | `<distortion>` block          |
 | k1, k2           | −0.02, 0.003 (mild barrel)                 | `<k1>`, `<k2>`                |
 | p1, p2           | 0, 0                                       | `<p1>`, `<p2>`                |
@@ -148,7 +148,7 @@ cam0:
   camera_model: pinhole
   distortion_model: radtan
   distortion_coeffs: [-0.02, 0.003, 0.0, 0.0]   # MUST match the SDF
-  intrinsics: [277.1, 277.1, 160.5, 120.5]      # fu, fv, cu, cv
+  intrinsics: [554.26, 554.26, 320.5, 240.5]    # fu, fv, cu, cv  (640×480)
   resolution: [320, 240]
   rostopic: /rs_front/image
 ```
@@ -331,26 +331,35 @@ on a Raspberry Pi.
 
 ### Tracker (front-end)
 
-Tuned for mono VIO on a forward-driving cave rover — squeeze every bit
-of parallax/feature info out of each frame:
-
 ```yaml
 use_klt: true               # KLT tracker (better than ORB for our setup)
-num_pts: 400                # features extracted per camera per frame
-fast_threshold: 10
+num_pts: 200                # features extracted per camera per frame
+fast_threshold: 20
 grid_x: 5
 grid_y: 5
-min_px_dist: 7
-track_frequency: 30.0       # Hz — match the rs_front camera's 30 Hz
-histogram_method: CLAHE     # Contrast Limited Adaptive Histogram Eq —
-                            # equalises local contrast, much better
-                            # than global HISTOGRAM in dim cave scenes
+min_px_dist: 10
+track_frequency: 21.0       # Hz — sub-rate of the 30 Hz camera
+histogram_method: HISTOGRAM # NONE / HISTOGRAM / CLAHE
 ```
 
-If you push the rover into a brighter environment (outdoor, Singapore
-River, etc.), flip back to `histogram_method: HISTOGRAM` and consider
-dropping `num_pts` back to 200 — CLAHE on already-well-exposed images
-can over-emphasise local noise.
+**Conservative defaults — and a hard lesson.** A previous iteration of
+this file tried to "tune for cave" by lowering `fast_threshold` to 10,
+bumping `num_pts` to 400, and switching to CLAHE. That combination
+*backfired catastrophically* on our gz camera — see
+[`docs/ANALYSIS.md`](ANALYSIS.md) for the side-by-side bag analysis.
+The root issue is that real-camera tuning assumes real-camera noise +
+real-camera dynamics. Our SDF camera is much cleaner (uniform
+lighting, no rolling shutter, only a small σ=0.01 Gaussian noise
+floor). CLAHE on that cleanness amplifies the Gaussian noise into
+fake structure; `fast_threshold: 10` then accepts the noise as
+features; the tracker locks onto ghosts and the filter integrates
+nonsense. The combination produced 22 km of reported motion on a 58 m
+drive (path-length ratio ≈ 380).
+
+If you ever swap to a real RealSense camera, or to a textured/dim
+outdoor Fuel world, flip the knobs in the *opposite* direction:
+`histogram_method: CLAHE`, `num_pts: 400`, `fast_threshold: 10`.
+For sim, the conservative defaults are correct.
 
 ---
 
