@@ -21,6 +21,15 @@
   <exec_depend>teleop_twist_keyboard</exec_depend>
   <exec_depend>ros2launch</exec_depend>
 
+  <!-- gt_to_path.py: convert /ground_truth/pose (TFMessage) to a Path
+       that evo can ingest, for VIO/LIO evaluation. -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>ros2bag</exec_depend>
+  <exec_depend>rosbag2_storage_default_plugins</exec_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

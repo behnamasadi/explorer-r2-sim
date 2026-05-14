@@ -382,7 +382,7 @@ docker compose exec sim ros2 launch explorer_r2_sim lio.launch.py
 Mode 2 and Mode 3 can run together — open a third terminal and launch the
 other one. They don't share topics.
 
-## Seeing OpenVINS output + comparing against ground truth
+## Evaluating VIO / LIO against ground truth
 
 ### What OpenVINS publishes
 
@@ -418,6 +418,46 @@ seconds of motion the green VIO trail should snake along behind the red
 wheel-odom trail — divergence between green and red over time tells you
 how much wheel odometry is drifting, while divergence between green and
 the ground-truth TF tells you how much VIO is drifting.
+
+### Quantitative comparison (`evo`)
+
+Three scripts in `scripts/` automate the record-and-evaluate loop:
+
+| Script              | What it does                                                                                                       |
+|---------------------|--------------------------------------------------------------------------------------------------------------------|
+| `gt_to_path.py`     | Subscribes to `/ground_truth/pose` (TFMessage), extracts the `explorer_r2` transform, republishes `/ground_truth/path` (`nav_msgs/Path`) so `evo` can ingest it. |
+| `record_run.sh tag` | Records a bag with `/ground_truth/path`, `/model/explorer_r2/odometry`, `/ov_msckf/*`, `/Odometry`, `/path`, `/cmd_vel` to `~/.local/share/evo/<tag>/<UTC>/`. |
+| `eval.sh <bag-dir>` | Converts each trajectory topic to TUM, runs `evo_ape` (APE) and `evo_rpe` (RPE) per estimator vs ground truth, writes per-estimator PNG plots and a `summary.txt`. |
+
+Install `evo` once (inside the container or on the host — your call):
+```bash
+pip install evo --user
+```
+
+Three-terminal workflow:
+
+```bash
+# Terminal 1 — sim:
+docker compose up
+
+# Terminal 2 — VIO + LIO + ground-truth-path publisher:
+docker compose exec sim ros2 launch explorer_r2_sim vio.launch.py &
+docker compose exec sim ros2 launch explorer_r2_sim lio.launch.py &
+docker compose exec sim ros2 run explorer_r2_sim gt_to_path.py
+
+# Terminal 3 — drive a scenario + record:
+docker compose exec sim ros2 run explorer_r2_sim record_run.sh slow_loop
+# Drive the joystick / keyboard to execute the slow_loop profile.
+# Ctrl-C when done.
+
+# Then evaluate:
+docker compose exec sim ros2 run explorer_r2_sim eval.sh \
+  ~/.local/share/evo/slow_loop/<UTC>
+```
+
+`scenarios/README.md` documents five canonical drive profiles (`static`,
+`slow_loop`, `fast_straight`, `sharp_turn`, `featureless_wall`) and rough
+sanity bands for what counts as a healthy APE RMSE on this rig.
 
 ## Exact sim calibration (cam ↔ IMU ↔ LiDAR)
 
