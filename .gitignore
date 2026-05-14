@@ -28,6 +28,7 @@ Thumbs.db
 *.db3
 *.mcap
 vio_run/
+/runs/
 
 # Packages that live in this workspace for shared colcon convenience but
 # belong to other projects — kept on disk, excluded from this repo:
