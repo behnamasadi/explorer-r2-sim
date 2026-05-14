@@ -506,14 +506,22 @@ accelerometer_random_walk:      1.0e-3
 
 ### Camera intrinsics (rs_front)
 
-| Param  | Value          |
-|--------|----------------|
-| width  | 320            |
-| height | 240            |
-| fx, fy | 277.1, 277.1   |
-| cx, cy | 160.5, 120.5   |
-| H-FOV  | 1.0472 rad (60°) |
-| Distortion | none (perfect pinhole) |
+| Param            | Value                                      |
+|------------------|--------------------------------------------|
+| width            | 320                                        |
+| height           | 240                                        |
+| fx, fy           | 277.1, 277.1                               |
+| cx, cy           | 160.5, 120.5                               |
+| H-FOV            | 1.0472 rad (60°)                           |
+| Distortion model | radial-tangential (`radtan`)                |
+| k1, k2           | −0.02, 0.003 (mild barrel; RealSense-like) |
+| p1, p2           | 0, 0                                       |
+| Image noise σ    | 0.01 (norm. 0–1; ≈ 2.5 grey levels of 255) |
+
+These distortion + noise values live in `models/explorer_r2/model.sdf`
+(the gz sensor) and `config/openvins/kalibr_imucam_chain.yaml` (what
+OpenVINS uses to undistort). **Keep them in sync** when tuning — a
+mismatch shows up as systematic VIO drift on straight-line drives.
 
 ### LiDAR (front_laser) — Ouster OS0-32 spec
 
