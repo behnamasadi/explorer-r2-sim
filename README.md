@@ -98,13 +98,17 @@ git submodule update --remote third_party/FAST_LIO   # follows ROS2 branch
 git submodule update --remote third_party/open_vins  # follows default branch
 ```
 
-After initialising a submodule, rebuild the image so the new source is
-picked up:
+After initialising a submodule, force a colcon rebuild so the new package
+is wired in:
 
 ```bash
 cd ~/ros2_ws/src/explorer_r2_sim
-docker compose build sim
+BUILD=force docker compose up
 ```
+
+The system image (`docker compose build sim`) doesn't need to be rebuilt
+— only the in-container colcon overlay does. The entrypoint detects new
+submodules in `third_party/` automatically and adds them to the build.
 
 ## explorer_r2_sim — what it is
 
@@ -205,11 +209,20 @@ cd ~/ros2_ws/src/explorer_r2_sim
 # Allow X clients from the container.
 xhost +local:root
 
-# Build (~3-5 min first time).
+# Build the system image (~2-3 min, apt installs only).
 docker compose build sim
 
-# Bring it up: gz sim + bridge + RViz + joy + teleop_twist_joy.
+# Bring it up: first run also colcon-builds the workspace (~3-5 min,
+# longer if open_vins/FAST_LIO submodules are initialised). Subsequent
+# runs reuse the build cache and start in seconds.
 docker compose up
+```
+
+The host's `~/ros2_ws` is bind-mounted into the container at `/ws`. Source
+edits show up live; `build/`, `install/`, `log/` end up on the host
+(gitignored). To force a clean rebuild after pulling submodule updates:
+```bash
+BUILD=force docker compose up
 ```
 
 ### Worlds
