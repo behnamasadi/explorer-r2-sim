@@ -233,6 +233,39 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("rqt_steering")),
     )
 
+    # Optional VIO / LIO bring-up. Default on so `docker compose up` gives
+    # you the full stack (sim + VIO + LIO) in one shot. Each include is
+    # gated on the corresponding submodule actually being installed —
+    # users who haven't initialised open_vins or FAST_LIO just get a
+    # warning and skip past it instead of a launch failure.
+    def _maybe_include_estimators(context, *_args, **_kwargs):
+        from ament_index_python.packages import PackageNotFoundError
+        actions = []
+
+        if LaunchConfiguration("vio").perform(context) == "true":
+            try:
+                get_package_share_directory("ov_msckf")
+                actions.append(IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        os.path.join(pkg_share, "launch", "vio.launch.py"))))
+            except PackageNotFoundError:
+                print("[cave.launch.py] vio:=true but ov_msckf is not installed — "
+                      "skipping. Initialise third_party/open_vins and rebuild.")
+
+        if LaunchConfiguration("lio").perform(context) == "true":
+            try:
+                get_package_share_directory("fast_lio")
+                actions.append(IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        os.path.join(pkg_share, "launch", "lio.launch.py"))))
+            except PackageNotFoundError:
+                print("[cave.launch.py] lio:=true but fast_lio is not installed — "
+                      "skipping. Initialise third_party/FAST_LIO and rebuild.")
+
+        return actions
+
+    estimators = OpaqueFunction(function=_maybe_include_estimators)
+
     return LaunchDescription([
         DeclareLaunchArgument("gui",     default_value="true"),
         DeclareLaunchArgument("rviz",    default_value="true"),
@@ -257,6 +290,10 @@ def generate_launch_description():
                               description="Robot spawn Z (m). 'auto' = SPAWN_POSES[<world>][2]"),
         DeclareLaunchArgument("spawn_yaw", default_value="auto",
                               description="Robot spawn yaw (rad). 'auto' = SPAWN_POSES[<world>][3]"),
+        DeclareLaunchArgument("vio", default_value="true",
+                              description="Auto-start OpenVINS (Mode 2). Requires the open_vins submodule."),
+        DeclareLaunchArgument("lio", default_value="true",
+                              description="Auto-start FAST_LIO (Mode 3). Requires the FAST_LIO submodule."),
         DeclareLaunchArgument("verbose", default_value="3"),
 
         # Make the Fuel + workspace model paths discoverable.
@@ -278,4 +315,5 @@ def generate_launch_description():
         joy_node,
         joy_teleop_node,
         rqt_steering,
+        estimators,
     ])

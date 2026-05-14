@@ -181,15 +181,16 @@ ROS 2 ↔ GZ bridge, RViz layouts, joystick teleop, and OpenVINS VIO.
 
 ## Running modes
 
-The simulator and the two odometry packages are decoupled. Start with mode 1;
-add VIO and/or LIO on top whenever you want — they attach to a running sim
-without restarting it.
+By default, `docker compose up` brings up **the full stack** — sim +
+OpenVINS (VIO) + FAST_LIO (LIO) — in one shot. You can also start the
+estimators independently after the sim is up, or opt out of them
+entirely.
 
 | Mode | What it gives you | Recipe |
 |------|------------------|--------|
-| **1. Sim only** (no sensor fusion) | gz sim + bridge + RViz + teleop. Drive the robot, see raw sensor topics. | [Quickstart — Mode 1](#quickstart--mode-1-sim-only) |
-| **2. + OpenVINS (VIO)** | Adds OpenVINS to the running sim. Its odometry + trajectory show up in the same RViz. | [Run VIO — Mode 2](#run-vio--mode-2-sim--openvins) |
-| **3. + FAST_LIO (LIO)** | Adds FAST_LIO. Its odometry + map show up in the same RViz. | [Run LIO — Mode 3](#run-lio--mode-3-sim--fast_lio) |
+| **1. Full stack** (default) | gz sim + bridge + RViz + teleop + OpenVINS + FAST_LIO. Drive the robot, see all three trajectories overlaid in RViz. | [Quickstart — Mode 1](#quickstart--mode-1-full-stack) |
+| **2. Sim only** | Mode 1 with `vio:=false lio:=false`. Lightest, drive + view sensors only. | `docker compose up` + pass args, see [Mode 1](#quickstart--mode-1-full-stack) |
+| **3. Attach estimator to running sim** | Start the sim without estimators, then attach OpenVINS or FAST_LIO separately. Useful for restart-without-restart workflows. | [Run VIO](#run-vio--attach-openvins-to-a-running-sim) / [Run LIO](#run-lio--attach-fast_lio-to-a-running-sim) |
 
 > **GNSS (`/navsat`, `sensor_msgs/NavSatFix` @ 10 Hz) and magnetometer
 > (`/magnetometer`, `sensor_msgs/MagneticField`)** are bridged out of the
@@ -198,16 +199,13 @@ without restarting it.
 > `ros-jazzy-robot-localization` and wire `navsat_transform_node` +
 > `ekf_node` (see the `robot_localization` docs).
 
-**One RViz layout for everything.** `rviz/sim.rviz` opens with the sim in
-Mode 1 and already has displays subscribed to the VIO and LIO topics —
-but those displays stay empty in Mode 1 because no estimator is running.
-Mode 2 and Mode 3 don't open a second RViz; they just start their
-respective nodes, and the existing layout's displays light up as the
-topics start publishing. The three modes are additive: you can run Mode
-1 + 2 + 3 together and see wheel-odom (red), VIO (green), and LIO (blue)
-trails overlaid on the same view.
+**One RViz layout for everything.** `rviz/sim.rviz` opens with the sim and
+has displays subscribed to wheel-odom (red), VIO (green), and LIO (blue)
+trajectories on the same orbit view. With the default Mode 1, all three
+trails appear once the robot moves; with `vio:=false lio:=false` only the
+red wheel-odom trail will populate.
 
-## Quickstart — Mode 1: sim only
+## Quickstart — Mode 1: full stack
 
 ```bash
 cd ~/ros2_ws/src/explorer_r2_sim
@@ -218,10 +216,18 @@ xhost +local:root
 # Build the system image (~2-3 min, apt installs only).
 docker compose build sim
 
-# Bring it up: first run also colcon-builds the workspace (~3-5 min,
-# longer if open_vins/FAST_LIO submodules are initialised). Subsequent
-# runs reuse the build cache and start in seconds.
+# Bring it up: gz sim + bridge + RViz + teleop + OpenVINS (VIO) + FAST_LIO (LIO).
+# First run also colcon-builds the workspace (~3-5 min). Subsequent runs
+# reuse the build cache and start in seconds.
 docker compose up
+```
+
+To opt out of one or both estimators (lighter resource usage):
+```bash
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
+  vio:=false lio:=false           # sim only
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
+  vio:=true lio:=false            # sim + VIO only
 ```
 
 The host's `~/ros2_ws` is bind-mounted into the container at `/ws`. Source
@@ -325,10 +331,14 @@ docker compose exec sim rqt --standalone rqt_robot_steering
 
 In the rqt window set the topic to `/cmd_vel` (default) and slide.
 
-## Run VIO — Mode 2: sim + OpenVINS
+## Run VIO — attach OpenVINS to a running sim
+
+Mode 1 already starts OpenVINS by default. This section is for the
+case where you launched the sim with `vio:=false` and want to attach
+VIO later, or restart VIO without restarting gz.
 
 Prerequisite: the `open_vins` submodule is initialised (see
-[Clone](#clone)) and you have a running sim from [Mode 1](#quickstart--mode-1-sim-only).
+[Clone](#clone)) and the sim is up from [Mode 1](#quickstart--mode-1-full-stack).
 
 OpenVINS is environment-agnostic — it consumes `/imu` and
 `/rs_front/image` regardless of which world the rover is in. It publishes
@@ -365,10 +375,14 @@ docker compose exec sim bash -ic "ros2 launch explorer_r2_sim vio.launch.py"
 docker compose logs -f sim    # tail sim logs in this terminal
 ```
 
-## Run LIO — Mode 3: sim + FAST_LIO
+## Run LIO — attach FAST_LIO to a running sim
+
+Mode 1 already starts FAST_LIO by default. This section is for the
+case where you launched the sim with `lio:=false` and want to attach
+LIO later, or restart LIO without restarting gz.
 
 Prerequisite: the `FAST_LIO` submodule is initialised (see
-[Clone](#clone)) and you have a running sim from [Mode 1](#quickstart--mode-1-sim-only).
+[Clone](#clone)) and the sim is up from [Mode 1](#quickstart--mode-1-full-stack).
 
 FAST_LIO is environment-agnostic — it consumes `/lidar/points` + `/imu`
 and publishes its own odometry, path, and map. The sim's RViz layout

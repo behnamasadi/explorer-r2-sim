@@ -57,6 +57,12 @@ if [ -e third_party/FAST_LIO/package.xml ]; then
         echo "[entrypoint] Fetching nested submodules under third_party/FAST_LIO/"
         git -C third_party/FAST_LIO submodule update --init --recursive
     fi
+    # FAST_LIO hard-codes C++14 in CMakeLists.txt (set 5 different ways).
+    # rclcpp on Jazzy uses C++17 features (std::is_convertible_v) inside
+    # the RCLCPP_INFO/WARN macros, so the build fails. Bump to C++17.
+    # Idempotent — sed on already-patched file is a no-op.
+    sed -i 's/c++14/c++17/g; s/CXX_STANDARD 14/CXX_STANDARD 17/g' \
+        third_party/FAST_LIO/CMakeLists.txt
     ln -sfn /ws/third_party/FAST_LIO /ws/src/fast_lio
     # FAST_LIO unconditionally find_package()'s livox_ros_driver2. We
     # don't have a Livox device — we feed it /lidar/points from the gz
