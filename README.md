@@ -232,10 +232,17 @@ docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
 
 The host's `~/ros2_ws` is bind-mounted into the container at `/ws`. Source
 edits show up live; `build/`, `install/`, `log/` end up on the host
-(gitignored). To force a clean rebuild after pulling submodule updates:
+(gitignored). To force a clean rebuild after pulling submodule updates or
+if the colcon cache gets into a weird state:
 ```bash
 BUILD=force docker compose up
 ```
+
+The first start of the container, after `BUILD=force`, or after either
+submodule is updated, does a colcon build that takes ~3-5 min. The
+entrypoint also auto-applies a few in-tree patches (OpenVINS `.h→.hpp`
+header renames for Jazzy, FAST_LIO C++17 bump, FAST_LIO's nested
+`ikd-Tree` submodule init) — all idempotent.
 
 ### Worlds
 
@@ -429,7 +436,7 @@ Mode 2):
   pinned to frame `explorer_r2` to see the absolute true position.
 
 Bring up the sim + OpenVINS using the recipe in
-[Run VIO — Mode 2](#run-vio--mode-2-sim--openvins) above, then drive the
+[Run VIO](#run-vio--attach-openvins-to-a-running-sim) above, then drive the
 robot a bit (joystick, keyboard, or rqt_robot_steering). After ~10
 seconds of motion the green VIO trail should snake along behind the red
 wheel-odom trail — divergence between green and red over time tells you
@@ -643,28 +650,36 @@ sudo apt install -y libceres-dev libeigen3-dev libboost-all-dev \
 # 5. Pull OpenVINS in as a submodule (with the Jazzy header patch):
 cd ~/ros2_ws
 git submodule update --init --recursive third_party/open_vins
-sed -i 's|image_transport/image_transport\.h|image_transport/image_transport.hpp|' \
+sed -i 's|image_transport/image_transport\.h>|image_transport/image_transport.hpp>|' \
   third_party/open_vins/ov_msckf/src/ros/{ROS2Visualizer,ROS1Visualizer}.h
-sed -i 's|tf2_geometry_msgs/tf2_geometry_msgs\.h|tf2_geometry_msgs/tf2_geometry_msgs.hpp|' \
+sed -i 's|tf2_geometry_msgs/tf2_geometry_msgs\.h>|tf2_geometry_msgs/tf2_geometry_msgs.hpp>|' \
   third_party/open_vins/ov_msckf/src/ros/{ROSVisualizerHelper,ROS2Visualizer,ROS1Visualizer}.h
-sed -i 's|cv_bridge/cv_bridge\.h|cv_bridge/cv_bridge.hpp|' \
+sed -i 's|cv_bridge/cv_bridge\.h>|cv_bridge/cv_bridge.hpp>|' \
   third_party/open_vins/ov_msckf/src/ros/{ROS1Visualizer,ROS2Visualizer}.h \
   third_party/open_vins/ov_core/src/test_tracking.cpp
 ln -sf ../third_party/open_vins ~/ros2_ws/src/open_vins   # let colcon see it
 
-# 6. (Optional) FAST_LIO for LIO — submodule already on the ROS2 branch:
+# 6. (Optional) FAST_LIO for LIO — submodule on the ROS2 branch with the
+#    nested ikd-Tree submodule. Patch the C++ standard from 14 → 17 so
+#    rclcpp's RCLCPP_INFO macros (which use std::is_convertible_v) compile.
 git submodule update --init --recursive third_party/FAST_LIO
 sudo apt install -y libpcl-dev ros-jazzy-pcl-conversions ros-jazzy-pcl-ros
+sed -i 's/c++14/c++17/g; s/CXX_STANDARD 14/CXX_STANDARD 17/g' \
+  third_party/FAST_LIO/CMakeLists.txt
 ln -sf ../third_party/FAST_LIO ~/ros2_ws/src/fast_lio
+# FAST_LIO hard-depends on livox_ros_driver2; the shim package in
+# src/livox_ros_driver2_msgs/ satisfies the find_package without needing
+# the actual Livox SDK (we feed Ouster-style /lidar/points anyway).
 
 # 7. Build the workspace:
 cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install \
-  --packages-select explorer_r2_sim ov_core ov_init ov_msckf fast_lio
+  --packages-select explorer_r2_sim ov_core ov_init ov_msckf \
+                    livox_ros_driver2 fast_lio
 source install/setup.bash
 
-# 8. Run:
+# 8. Run (sim + VIO + LIO by default — opt-out with vio:=false lio:=false):
 ros2 launch explorer_r2_sim cave.launch.py
 ```
 
