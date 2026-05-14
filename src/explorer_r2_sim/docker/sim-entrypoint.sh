@@ -49,6 +49,14 @@ fi
 
 # ─── Optional: FAST_LIO (LIO) ───────────────────────────────────────────
 if [ -e third_party/FAST_LIO/package.xml ]; then
+    # FAST_LIO has a nested submodule (include/ikd-Tree). If the user
+    # cloned the parent submodule without --recursive, the nested one
+    # is missing and the build fails with "Cannot find source file:
+    # include/ikd-Tree/ikd_Tree.cpp". Auto-fix.
+    if [ ! -f third_party/FAST_LIO/include/ikd-Tree/ikd_Tree.cpp ]; then
+        echo "[entrypoint] Fetching nested submodules under third_party/FAST_LIO/"
+        git -C third_party/FAST_LIO submodule update --init --recursive
+    fi
     ln -sfn /ws/third_party/FAST_LIO /ws/src/fast_lio
     # FAST_LIO unconditionally find_package()'s livox_ros_driver2. We
     # don't have a Livox device — we feed it /lidar/points from the gz

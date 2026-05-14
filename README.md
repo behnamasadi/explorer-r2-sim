@@ -85,10 +85,11 @@ one and want to add it now:
 cd ~/ros2_ws
 
 # Add OpenVINS (VIO) only:
-git submodule update --init third_party/open_vins
+git submodule update --init --recursive third_party/open_vins
 
-# Add FAST_LIO (LIO) only:
-git submodule update --init third_party/FAST_LIO
+# Add FAST_LIO (LIO) only — must be --recursive, FAST_LIO has a
+# nested ikd-Tree submodule:
+git submodule update --init --recursive third_party/FAST_LIO
 
 # Or both at once:
 git submodule update --init --recursive
