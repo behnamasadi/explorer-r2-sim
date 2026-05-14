@@ -119,40 +119,39 @@ it from any of three places — pick whichever matches your habits:
 
 #### Option A — conda env on the host (recommended for repeat use)
 
-If you have a conda env for this project (e.g. `explorer-r2-sim`):
+Use **Python 3.12** to match the ROS 2 Jazzy base image — that keeps
+`rclpy` imports clean if you ever mix this Python with a sourced ROS
+overlay. The repo's conda env (`explorer_r2_sim`) is already on 3.12.13.
 
 ```bash
-conda activate explorer-r2-sim
-pip install numpy matplotlib rosbags opencv-python    # once
+conda activate explorer_r2_sim
+
+# Analyser deps + evo's full runtime deps. evo itself ships with the env;
+# scipy/pandas/pyyaml/seaborn/numexpr/pygments are evo's runtime deps it
+# doesn't pull in automatically.
+pip install numpy matplotlib rosbags opencv-python \
+            scipy pandas pyyaml seaborn numexpr pygments greenlet   # once
 
 cd ~/ros2_ws
 python src/explorer_r2_sim/scripts/analyze_bag.py runs/run_<UTC>
 ```
 
-#### Option B — system Python on the host
+> **Do not pass `--user` or `--break-system-packages` inside a conda
+> env.** `--user` installs to `~/.local/lib/python3.12/site-packages`,
+> which Python imports *before* the conda env — so the `--user` numpy
+> shadows the conda numpy and you end up with two copies fighting.
+> Plain `pip install` (no flags) puts everything in
+> `~/anaconda3/envs/explorer_r2_sim/lib/python3.12/site-packages/`,
+> where it belongs.
+
+If you previously ran `pip3 install --user --break-system-packages …`
+and want to undo the shadowing:
 
 ```bash
-pip3 install --user --break-system-packages numpy matplotlib rosbags opencv-python   # once
-
-cd ~/ros2_ws
-python3 src/explorer_r2_sim/scripts/analyze_bag.py runs/run_<UTC>
+pip uninstall --user numpy matplotlib rosbags opencv-python \
+                     contourpy fonttools kiwisolver pillow pyparsing \
+                     cycler lz4 ruamel.yaml zstandard
 ```
-
-#### Option C — inside the running container
-
-The package already declares `python3-numpy` and friends as deps, and
-the script is installed to `lib/explorer_r2_sim/` by colcon. Use it
-via `ros2 run`:
-
-```bash
-docker compose exec sim bash -ic \
-  "pip3 install rosbags opencv-python --break-system-packages 2>/dev/null; \
-   ros2 run explorer_r2_sim analyze_bag.py /ws/runs/run_<UTC>"
-```
-
-(`rosbags` and `opencv-python` aren't in the system image yet — the
-inline pip install is idempotent; once it's run once in a running
-container the cache hits on subsequent runs.)
 
 #### Output (all three options)
 
@@ -175,7 +174,8 @@ error — that subtracts out the unobservable initial yaw and tells you
 the *true* drift, separately from frame misalignment.
 
 ```bash
-pip3 install evo --user --break-system-packages
+# Inside the conda env from Option A, evo is already present.
+# If you skipped Option A, install it with: pip install evo
 mkdir -p /tmp/eval && cd /tmp/eval
 evo_traj bag2 ~/ros2_ws/runs/run_<UTC> \
   /ground_truth/odom /ov_msckf/odomimu /Odometry --save_as_tum
@@ -186,9 +186,64 @@ evo_ape tum ground_truth_odom.tum Odometry.tum            -va --plot --plot_mode
 ### 6. Compare against a previous run
 
 Append the new row to the [numbers table](#numbers-from-the-most-recent-runs)
-above. The analyser flags whether each estimator looks healthy / has
-scale drift / has yaw offset; comparing two bags' `summary.md` files
-tells you whether a config change helped or hurt.
+at the top. The analyser flags whether each estimator looks healthy /
+has scale drift / has yaw offset in its `summary.md`; comparing two
+bags' summaries side-by-side tells you whether a config change helped
+or hurt.
+
+#### What "healthy" looks like for each metric
+
+After the v2 case study and the revert + camera-resolution bump, the
+targets for the next bag (call it v3) are:
+
+| Metric                                                            | v1 (pre-fixes)     | v2 (CLAHE + aggressive) | v3 target                                       |
+|-------------------------------------------------------------------|-------------------:|------------------------:|-------------------------------------------------|
+| **VIO path-length ratio**  (`<vio_path> / <gt_path>`)              | 7.21               | 378                     | **< 5** = clean improvement; **< 2** = genuinely usable mono VIO |
+| **VIO end-position error**                                         | 195 m (485 %)      | 4030 m (6887 %)         | **< 30 m** on a ~50 m drive                     |
+| **VIO Z during a stop** (look at `trajectory_xyz.png`)             | rising line        | exploding               | **flat line** — confirms ZUPT is firing         |
+| **`imu_accel.png`** \|accel\| at rest                              | ~9.81 m/s²         | ~9.81 m/s²              | unchanged — IMU itself is fine                  |
+| **LIO end-position error**                                         | 0.64 m (1.6 %)     | 0.15 m (0.3 %)          | ≲ 0.5 m. If this regresses, *something else* broke. |
+
+#### Capture the VIO init log too
+
+The OpenVINS init log tells you whether init happened on clean data.
+Open a third terminal during the bag run and dump it:
+
+```bash
+docker compose logs sim 2>&1 | grep -E "\[init\]" \
+  > /tmp/vio_init_$(date -u +%Y%m%dT%H%M%SZ).log
+```
+
+Healthy init (after the 8 s startup delay + 5 s window) looks like:
+
+```
+[init]: successful initialization in ~5.0 seconds
+[init]: orientation = (small, small, small, ≈1)   ← quaternion near identity
+[init]: bias gyro  = (~0, ~0, ~0)
+[init]: bias accel = (~0, ~0, small)
+```
+
+Diagnosis if it doesn't:
+
+| What you see                                                         | Likely cause                                                                     |
+|----------------------------------------------------------------------|----------------------------------------------------------------------------------|
+| `init in 0.0003 seconds`                                             | Triggered on spawn-drop impact (the v1 bug — should be cured by the 8 s delay).  |
+| `orientation = (0, 0, 1, 0)` or similar with large quaternion z      | 180° yaw — IMU-only init can't recover yaw. Drive a figure-8 so dynamic init can refine it. |
+| `bias accel.z` far from zero                                         | Init grabbed a tilted-rover gravity vector; let the rover settle longer next time. |
+| No `[init]` line at all                                              | Init never fired — `init_imu_thresh` too high or `init_window_time` too short for your drive profile. |
+
+#### What goes in the row
+
+Once you've run the analyser, three fields are enough for the table:
+
+- `LIO err` — from `End-position error vs GT` in `summary.md`, the
+  `|err|` value and its `|err| / GT_path` percentage.
+- `LIO ratio` — from `Path-length ratio (estimator / GT)` in
+  `summary.md`.
+- Same two columns for VIO.
+
+Paste the row (or just send me the `summary.md`) and the analyser's
+auto-interpretation block is usually self-explanatory.
 
 ---
 
