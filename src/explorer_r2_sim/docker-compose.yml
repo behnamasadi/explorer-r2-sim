@@ -13,6 +13,8 @@ name: explorer_r2_sim
 #   docker compose exec sim ros2 launch explorer_r2_sim lio.launch.py  # + mode 3
 #   docker compose run --rm sim bash    # interactive shell
 #   BUILD=force docker compose up       # rebuild from scratch
+#   WORLD=cave docker compose up        # different world (default: tunnel)
+#   WORLD=rubicon docker compose up     # any preset, local SDF path, or Fuel URL
 #
 # After bring-up, drive from any other ROS 2 terminal sharing ROS_DOMAIN_ID:
 #   ros2 run teleop_twist_keyboard teleop_twist_keyboard
@@ -26,6 +28,17 @@ services:
         ROS_DISTRO: ${ROS_DISTRO:-jazzy}
         GZ_PKG:     ${GZ_PKG:-gz-harmonic}
     image: explorer_r2_sim/sim:${ROS_DISTRO:-jazzy}
+    # Override the Dockerfile CMD so we can plumb $WORLD through to the
+    # cave.launch.py world:= arg without editing anything in-tree. The
+    # default (tunnel) matches the launch file's own default; pass any
+    # preset (tunnel | cave | rubicon | tugbot_depot | singapore_river),
+    # any local SDF path, or any Fuel URL.
+    command:
+      - ros2
+      - launch
+      - explorer_r2_sim
+      - cave.launch.py
+      - world:=${WORLD:-tunnel}
     network_mode: host
     ipc: host
     privileged: true
