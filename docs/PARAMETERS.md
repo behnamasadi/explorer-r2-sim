@@ -332,7 +332,7 @@ on a Raspberry Pi.
 ### Tracker (front-end)
 
 ```yaml
-use_klt: true               # KLT tracker (better than ORB for our setup)
+use_klt: true               # KLT (true) vs ORB+descriptor matching (false)
 num_pts: 200                # features extracted per camera per frame
 fast_threshold: 20
 grid_x: 5
@@ -341,6 +341,23 @@ min_px_dist: 10
 track_frequency: 21.0       # Hz — sub-rate of the 30 Hz camera
 histogram_method: HISTOGRAM # NONE / HISTOGRAM / CLAHE
 ```
+
+**`use_klt: true` vs `false`** — this is the descriptor question. KLT
+(Lucas-Kanade pyramidal optical flow on FAST corners) is fast and
+excellent for small frame-to-frame motion, but on self-similar texture
+(e.g. our hexagonal-lattice tunnel walls) it can drift to a
+neighbouring identical patch when a feature is partially occluded.
+The user's own experience on the KITTI dataset shows the same pattern:
+`cv2.goodFeaturesToTrack` + KLT produces visibly worse VO trajectories
+than SIFT-based tracking on the same sequences
+([behnamasadi/OpenCVProjects/docs/kitti.ipynb](https://github.com/behnamasadi/OpenCVProjects/blob/master/docs/kitti.ipynb)).
+With `use_klt: false`, OpenVINS switches to FAST + ORB descriptors +
+brute-force kNN matching with the `knn_ratio: 0.70` Lowe's-ratio
+filter — ambiguous matches (where two candidates are nearly equally
+good) are rejected automatically, which helps in self-similar scenes
+specifically. Cost is some extra CPU per frame. See
+[`docs/ANALYSIS.md` case study 3.5](ANALYSIS.md#case-study-35--orientation-jitter-and-the-klt-vs-descriptor-question)
+for the full discussion and when to consider switching.
 
 **Conservative defaults — and a hard lesson.** A previous iteration of
 this file tried to "tune for cave" by lowering `fast_threshold` to 10,

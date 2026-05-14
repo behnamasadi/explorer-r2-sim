@@ -634,6 +634,103 @@ Looking at the actual camera frames in the bag (`camera_frames/`):
    is already published — no SDF change needed. A different VIO
    submodule, but no second camera required.
 
+## Case study 3.5 — orientation jitter and the KLT-vs-descriptor question
+
+While inspecting RViz during the v3 run, the user noticed the VIO Odom
+display oscillating "very fast frequency" — three screenshots taken
+within 7 seconds (`Screenshot from 2026-05-14 19-51-{08,12,15}.png`)
+showed the same scene with `cam0` and `imu` axes at the same position
+but pointing in clearly different directions.
+
+The visual artefact is the **VIO Odom arrow display with `Keep: 200`**:
+RViz overlays the last 200 messages on `/ov_msckf/odomimu`, each drawn
+as a green arrow. OpenVINS publishes at the IMU rate (~75 Hz), so 200
+arrows = the latest ~2.7 s of state estimate. When the *position* is
+roughly stable but the *orientation* differs from message to message,
+RViz renders the cluster as a chaotic forest of green cylinders
+pointing in many directions. That forest is the user-visible signature
+of **orientation jitter on the per-IMU-step timescale**.
+
+### Why orientation jitters here
+
+Looking at the camera frames in `runs/run_20260514T182108Z/`, the
+tunnel walls have a regular hexagonal-lattice pattern. Two failure
+modes combine:
+
+1. **Correspondence ambiguity from self-similar texture.** KLT (which
+   OpenVINS uses by default — `use_klt: true`) tracks each feature
+   patch frame-to-frame by minimizing patch SSD. On a lattice where
+   every grid intersection looks identical, the minimisation can
+   converge to a *neighbouring* cell when a feature is partially
+   occluded or when motion is large. Each false correspondence
+   feeds an incorrect geometric constraint into the MSCKF update →
+   the filter applies a small orientation correction → next IMU step
+   it gets another bad constraint pointing slightly differently → the
+   orientation oscillates.
+2. **Weak rotation observability in forward-driving mono VIO.** Same
+   reason the trail drifts overall: the optical-axis-aligned motion
+   gives little parallax, and rotation around the gravity axis (yaw)
+   is the weakest of all. Even *correct* correspondences carry less
+   information about orientation here than they would for a side-
+   looking camera or a yaw-heavy drive.
+
+The combination is the user's "fast-frequency fluctuation."
+
+### Fix #1 — tighten the camera-pixel noise model (applied)
+
+`config/openvins/estimator_config.yaml`:
+
+```yaml
+up_msckf_sigma_px: 1  →  2
+up_slam_sigma_px:  1  →  2
+```
+
+This tells the filter "trust each pixel observation less" — measurement
+covariance doubles, MSCKF updates damp by ~4×. Trade-off: a *real*
+fast rotation (e.g. the rover hitting a bump and yawing 5° in 50 ms)
+will be tracked more slowly. For our rover with smooth 1 rad/s max
+yaw, that's fine.
+
+### Fix #2 — try ORB descriptors instead of KLT (proposed, not applied)
+
+The user pointed out a directly relevant finding from
+[`behnamasadi/OpenCVProjects/docs/kitti.ipynb`](https://github.com/behnamasadi/OpenCVProjects/blob/master/docs/kitti.ipynb):
+
+> If you use `SIFT` run: `python kitti_vo_sift.py` (works well)
+> or if you use `cv2.goodFeaturesToTrack` you will get poor results:
+> `python kitti_vo.py`
+
+That's the same KLT-vs-descriptor question for OpenVINS. The relevant
+flag is **`use_klt`** in `estimator_config.yaml`:
+
+| `use_klt: true` (current)         | `use_klt: false` (ORB + descriptor matching) |
+|-----------------------------------|----------------------------------------------|
+| Lucas-Kanade pyramidal optical flow on FAST corners. | FAST corners → ORB binary descriptor → brute-force kNN match with `knn_ratio: 0.70` test. |
+| Very fast. Excellent for small frame-to-frame motion. | Slower (descriptor compute + match per frame). |
+| Patch-based — robust to mild appearance change, but on self-similar texture can drift to a neighbouring identical-looking patch. | Descriptor-based + Lowe's ratio test: if the best match's distance is too close to the second-best's, the match is rejected. **On a lattice scene, ambiguous matches get filtered out automatically.** |
+| What `cv2.goodFeaturesToTrack` + `cv2.calcOpticalFlowPyrLK` is doing in your KITTI notebook. | Equivalent to a stripped-down SIFT-style pipeline (ORB is faster than SIFT, similarly robust to lattice ambiguity because of the kNN-ratio filter). |
+
+For our tunnel-lattice scene, ORB's automatic ambiguity rejection
+should reduce the orientation-jitter rate substantially. Cost is
+extra CPU per frame; with `num_pts: 200` it's well within budget.
+
+If Fix #1 alone doesn't produce a clean RViz arrow track in v4, the
+next experiment is to flip `use_klt: false` and re-run. That's a
+single-line config change.
+
+### Visual workaround (no code)
+
+Independent of the underlying fix, you can clean up the RViz display:
+
+- In RViz Displays panel → click **VIO Odom**
+- Set **Keep** from `200` to `10`
+
+That hides the long arrow tail. The current VIO arrow + most-recent
+~0.1 s of history is enough to see where the filter "is right now,"
+without the forest of stale orientations cluttering the view. The
+jitter is still in the data — but the visualisation isn't dominated
+by it.
+
 ## What's left to try on mono VIO
 
 After the timing fixes and the tracker revert, the levers still on

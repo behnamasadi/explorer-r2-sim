@@ -133,10 +133,19 @@ downsize_aruco: true
 # ==================================================================
 # ==================================================================
 
-# camera noises and chi-squared threshold multipliers
-up_msckf_sigma_px: 1
+# Camera noises and chi-squared threshold multipliers.
+#
+# up_msckf_sigma_px: the pixel-noise σ that the filter assumes for each
+# 2D feature observation. Larger value = filter trusts each pixel
+# observation less = orientation/translation updates are more conservative.
+# Default 1.0 was producing fast-frequency orientation jitter on the
+# tunnel/cave lattice scene (visible as a "forest of arrows" cluster in
+# the RViz VIO Odom display — see docs/ANALYSIS.md "case study 3.5").
+# Bumped to 2.0 to dampen the per-IMU-step orientation kicks from
+# ambiguous KLT correspondences across the regular grid pattern.
+up_msckf_sigma_px: 2
 up_msckf_chi2_multipler: 1
-up_slam_sigma_px: 1
+up_slam_sigma_px: 2
 up_slam_chi2_multipler: 1
 up_aruco_sigma_px: 1
 up_aruco_chi2_multipler: 1
