@@ -181,16 +181,21 @@ ROS 2 ↔ GZ bridge, RViz layouts, joystick teleop, and OpenVINS VIO.
 
 ## Running modes
 
-By default, `docker compose up` brings up **the full stack** — sim +
-OpenVINS (VIO) + FAST_LIO (LIO) — in one shot. You can also start the
-estimators independently after the sim is up, or opt out of them
-entirely.
+By default, `docker compose up` brings up **the sim only** — gz +
+bridge + RViz + teleop, no sensor fusion. VIO and LIO are explicit
+opt-ins; you can either start them alongside the sim from the same
+launch (`vio:=true lio:=true`) or attach them to a running sim from
+another terminal.
 
 | Mode | What it gives you | Recipe |
 |------|------------------|--------|
-| **1. Full stack** (default) | gz sim + bridge + RViz + teleop + OpenVINS + FAST_LIO. Drive the robot, see all three trajectories overlaid in RViz. | [Quickstart — Mode 1](#quickstart--mode-1-full-stack) |
-| **2. Sim only** | Mode 1 with `vio:=false lio:=false`. Lightest, drive + view sensors only. | `docker compose up` + pass args, see [Mode 1](#quickstart--mode-1-full-stack) |
-| **3. Attach estimator to running sim** | Start the sim without estimators, then attach OpenVINS or FAST_LIO separately. Useful for restart-without-restart workflows. | [Run VIO](#run-vio--attach-openvins-to-a-running-sim) / [Run LIO](#run-lio--attach-fast_lio-to-a-running-sim) |
+| **1. Sim only** (default) | gz sim + bridge + RViz + teleop. Drive the robot, see raw sensor topics. | [Quickstart — Mode 1](#quickstart--mode-1-sim-only) |
+| **2. + OpenVINS (VIO)** | Adds OpenVINS to the running sim — green trajectory in RViz against wheel-odom (red) and ground truth. | [Run VIO](#run-vio--attach-openvins-to-a-running-sim) |
+| **3. + FAST_LIO (LIO)** | Adds FAST_LIO — blue trajectory plus an accumulated point-cloud map in RViz. | [Run LIO](#run-lio--attach-fast_lio-to-a-running-sim) |
+
+Mode 2 and Mode 3 are independent — you can run one, the other, both,
+or neither. They publish to topics the existing `rviz/sim.rviz` layout
+already subscribes to, so no second RViz is needed.
 
 > **GNSS (`/navsat`, `sensor_msgs/NavSatFix` @ 10 Hz) and magnetometer
 > (`/magnetometer`, `sensor_msgs/MagneticField`)** are bridged out of the
@@ -201,11 +206,11 @@ entirely.
 
 **One RViz layout for everything.** `rviz/sim.rviz` opens with the sim and
 has displays subscribed to wheel-odom (red), VIO (green), and LIO (blue)
-trajectories on the same orbit view. With the default Mode 1, all three
-trails appear once the robot moves; with `vio:=false lio:=false` only the
-red wheel-odom trail will populate.
+trajectories on the same orbit view. In Mode 1 only the red wheel-odom
+trail populates; the VIO and LIO displays stay empty until you start
+those estimators (Mode 2 or Mode 3).
 
-## Quickstart — Mode 1: full stack
+## Quickstart — Mode 1: sim only
 
 ```bash
 cd ~/ros2_ws/src/explorer_r2_sim
@@ -216,7 +221,7 @@ xhost +local:root
 # Build the system image (~2-3 min, apt installs only).
 docker compose build sim
 
-# Bring it up: gz sim + bridge + RViz + teleop + OpenVINS (VIO) + FAST_LIO (LIO).
+# Bring it up: gz sim + bridge + RViz + teleop. No VIO, no LIO.
 # First run also colcon-builds the workspace (~3-5 min). Subsequent runs
 # reuse the build cache and start in seconds.
 docker compose up
@@ -228,34 +233,36 @@ docker compose up
 |--------------------------|---------------------------------------------------------|-----------------|----------------------------------------------------------|
 | **gz sim**               | sensor topics: `/imu`, `/lidar/points`, `/rs_front/*`, `/navsat`, … | Lidar Cloud, RS Front Camera/Cloud, TF | Immediately when gz finishes loading the world.          |
 | **DiffDrive plugin**     | `/model/explorer_r2/odometry`                            | **Wheel Odom** (red arrow) | As soon as the robot moves (wheels turn).                 |
-| **OpenVINS (VIO)**       | `/ov_msckf/odomimu`, `/ov_msckf/pathimu`, `/ov_msckf/points_msckf`, … | **VIO Odom** (green arrow) + **VIO Path** (green line) + feature cloud | After **~3-5 s of camera motion** — VIO needs parallax to initialise. A stationary robot will publish nothing. |
-| **FAST_LIO (LIO)**       | `/Odometry`, `/path`, `/cloud_registered`                | **LIO Odom** (blue arrow) + **LIO Path** (blue line) + accumulated map cloud | After **~1-2 s of lidar frames** (LIO converges on the first few scans).  |
 | **Ground truth** (gz)    | `/ground_truth/pose` (TFMessage)                         | TF display, frame `explorer_r2` | Immediately.                                              |
+| **VIO / LIO displays**   | *(not running in Mode 1)*                                | empty until you start Mode 2 / Mode 3 | See [Run VIO](#run-vio--attach-openvins-to-a-running-sim) and [Run LIO](#run-lio--attach-fast_lio-to-a-running-sim). |
 
-The three trails (red wheel-odom, green VIO, blue LIO) share `rviz/sim.rviz`
-and overlay on the same orbit view. **Drive the robot** (joystick or
-keyboard — see [How to drive the robot](#how-to-drive-the-robot)); without
-motion the estimator displays stay empty.
+**Drive the robot** (joystick or keyboard — see [How to drive the
+robot](#how-to-drive-the-robot)); without motion the wheel-odom trail
+stays at the spawn pose.
 
-### Opting out of VIO / LIO
+### Adding VIO and/or LIO
+
+Two equivalent paths:
+
+**(a) Start the estimators alongside the sim** — single command, single
+terminal:
 
 ```bash
-# Sim only — lightest, no estimators:
-docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
-  vio:=false lio:=false
+# Sim + VIO:
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py vio:=true
 
-# Sim + VIO only (skip LIO):
-docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
-  lio:=false
+# Sim + LIO:
+docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py lio:=true
 
-# Sim + LIO only (skip VIO):
+# Sim + VIO + LIO:
 docker compose run --rm sim ros2 launch explorer_r2_sim cave.launch.py \
-  vio:=false
+  vio:=true lio:=true
 ```
 
-If you launched with an estimator off and want to attach it later without
-restarting gz, see [Run VIO](#run-vio--attach-openvins-to-a-running-sim)
-or [Run LIO](#run-lio--attach-fast_lio-to-a-running-sim).
+**(b) Attach to an already-running sim** — useful if you want to start /
+stop an estimator without bouncing gz. See
+[Run VIO](#run-vio--attach-openvins-to-a-running-sim) and
+[Run LIO](#run-lio--attach-fast_lio-to-a-running-sim) below.
 
 The host's `~/ros2_ws` is bind-mounted into the container at `/ws`. Source
 edits show up live; `build/`, `install/`, `log/` end up on the host

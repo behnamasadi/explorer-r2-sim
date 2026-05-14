@@ -290,10 +290,10 @@ def generate_launch_description():
                               description="Robot spawn Z (m). 'auto' = SPAWN_POSES[<world>][2]"),
         DeclareLaunchArgument("spawn_yaw", default_value="auto",
                               description="Robot spawn yaw (rad). 'auto' = SPAWN_POSES[<world>][3]"),
-        DeclareLaunchArgument("vio", default_value="true",
-                              description="Auto-start OpenVINS (Mode 2). Requires the open_vins submodule."),
-        DeclareLaunchArgument("lio", default_value="true",
-                              description="Auto-start FAST_LIO (Mode 3). Requires the FAST_LIO submodule."),
+        DeclareLaunchArgument("vio", default_value="false",
+                              description="Auto-start OpenVINS alongside the sim. Requires the open_vins submodule."),
+        DeclareLaunchArgument("lio", default_value="false",
+                              description="Auto-start FAST_LIO alongside the sim. Requires the FAST_LIO submodule."),
         DeclareLaunchArgument("verbose", default_value="3"),
 
         # Make the Fuel + workspace model paths discoverable.
